@@ -845,11 +845,11 @@ const distPath = path.join(__dirname, 'dist');
 if (fs.existsSync(distPath)) {
     app.use(express.static(distPath));
     // SPA fallback — all non-API routes serve index.html
-    app.get('*', (req, res) => {
-        if (!req.path.startsWith('/api/') && !req.path.startsWith('/uploads/')) {
-            res.sendFile(path.join(distPath, 'index.html'));
-        }
-    });
+   app.get(/.*/, (req, res) => {
+  if (!req.path.startsWith('/api/') && !req.path.startsWith('/uploads/')) {
+    res.sendFile(path.join(distPath, 'index.html'));
+  }
+});
     console.log('📦 Serving frontend from dist/');
 }
 
