@@ -46,6 +46,7 @@ export const BLOCK_TYPES = [
     { type: 'chart', label: 'Gráficos', icon: '📈', color: '#2563eb', category: 'charts', desc: 'Dados visuais' },
 
     // ── Personalização ──
+    { type: 'logo', label: 'Logo', icon: '◎', color: '#6366f1', category: 'customization', desc: 'Logo centralizado (topo ou rodapé)' },
     { type: 'spacer', label: 'Espaço', icon: '↕', color: '#94a3b8', category: 'customization', desc: 'Espaçamento vertical' },
     { type: 'html-script', label: 'HTML/Script', icon: '</>', color: '#94a3b8', category: 'customization', desc: 'Código customizado' },
 
@@ -239,6 +240,8 @@ export function createBlock(type) {
             return { ...base, height: 40 };
         case 'html-script':
             return { ...base, code: '<!-- Seu código aqui -->', executeOnLoad: true };
+        case 'logo':
+            return { ...base, imageUrl: '', maxWidth: 120, position: 'top', alt: 'Logo' };
         default: return base;
     }
 }

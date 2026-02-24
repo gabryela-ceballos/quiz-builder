@@ -577,7 +577,7 @@ export default function Player() {
   const [result, setResult] = useState(null);
   const [optionAnim, setOptionAnim] = useState(null);
 
-  useEffect(() => { getQuiz(id).then(q => { if (!q) navigate('/'); else setQuiz(q); }); }, [id]);
+  useEffect(() => { getQuiz(id).then(q => { if (!q) navigate('/'); else { setQuiz(q); recordEvent(q.id, 'view'); } }); }, [id]);
 
   const T = useMemo(() => quiz ? buildTheme(quiz) : null, [quiz]);
   const ne = useMemo(() => quiz ? getNicheEmojis(quiz.niche) : NE.outro, [quiz]);
@@ -838,27 +838,18 @@ export default function Player() {
         {/* Header */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative', padding: '16px 0 6px' }}>
           {pageIndex > 0 && <button style={{ position: 'absolute', left: 0, background: 'none', border: 'none', cursor: 'pointer', color: T.text, padding: 8 }} onClick={goBack}><ChevronLeft size={24} /></button>}
-          <span style={{ fontWeight: 700, fontSize: '0.82rem', color: T.text, letterSpacing: '.01em' }}>
-            {isInsight || isSP ? (quiz.name?.replace('Quiz: ', '') || 'Quiz') : `${phaseEmoji} ${label}`}
-          </span>
+          {quiz.companyName && (
+            <span style={{ fontWeight: 700, fontSize: '0.82rem', color: T.text, letterSpacing: '.01em' }}>
+              {quiz.companyName}
+            </span>
+          )}
         </div>
 
-        {/* Phase indicator + Progress */}
+        {/* Progress bar — single continuous bar */}
         {!isInsight && !isSP && (
           <div style={{ marginBottom: 20 }}>
-            <p style={{ fontSize: '0.72rem', color: T.textMuted, textAlign: 'center', marginBottom: 8, fontWeight: 500 }}>
-              Fase {sectionIdx + 1} de {total} — {label}
-            </p>
-            <div style={{ display: 'flex', gap: 5 }}>
-              {sections.map((_, si) => {
-                const done = si < sectionIdx;
-                const active = si === sectionIdx;
-                return (
-                  <div key={si} style={{ flex: 1, height: 5, borderRadius: 3, background: done ? T.primary : `rgba(${T.rgb},.12)`, position: 'relative', overflow: 'hidden', transition: 'background .4s' }}>
-                    {active && <div className="qp-progress-fill" style={{ position: 'absolute', left: 0, top: 0, height: '100%', width: `${progress * 100}%`, background: T.primary, borderRadius: 3 }} />}
-                  </div>
-                );
-              })}
+            <div style={{ height: 5, borderRadius: 3, background: `rgba(${T.rgb},.12)`, overflow: 'hidden' }}>
+              <div className="qp-progress-fill" style={{ height: '100%', width: `${((pageIndex + 1) / pages.length) * 100}%`, background: T.primary, borderRadius: 3, transition: 'width 0.4s ease' }} />
             </div>
           </div>
         )}
@@ -1106,8 +1097,13 @@ export default function Player() {
                     if (bType === 'price') return <div key={i} style={{ background: T.card, borderRadius: 18, padding: '20px 16px', border: `1px solid ${T.border}`, marginBottom: 12, textAlign: 'center' }}><h3 style={{ fontSize: '1.1rem', fontWeight: 700, marginBottom: 8 }}>{b.title}</h3>{b.originalPrice && <div style={{ fontSize: '0.85rem', color: T.textMuted, textDecoration: 'line-through' }}>{b.originalPrice}</div>}<div style={{ fontSize: '1.8rem', fontWeight: 800, color: T.primary }}>{b.price}</div>{b.discount && <span style={{ padding: '3px 10px', borderRadius: 6, background: `rgba(${T.rgb},.1)`, color: T.primary, fontSize: '0.75rem', fontWeight: 700 }}>{b.discount}</span>}{(b.features || []).length > 0 && <ul style={{ listStyle: 'none', padding: 0, margin: '12px 0 0', textAlign: 'left' }}>{b.features.map((f, fi) => <li key={fi} style={{ display: 'flex', gap: 6, alignItems: 'center', padding: '4px 0', fontSize: '0.85rem', color: T.textSec }}><span style={{ color: T.primary }}>✓</span>{f}</li>)}</ul>}</div>;
                     if (bType === 'arguments') return <div key={i} style={{ marginBottom: 12 }}><h3 style={{ fontSize: '1rem', fontWeight: 700, marginBottom: 10 }}>{b.title}</h3><ul style={{ listStyle: 'none', padding: 0 }}>{(b.items || []).map((item, ii) => <li key={ii} style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '8px 0', borderBottom: `1px solid ${T.border}`, fontSize: '0.9rem', color: T.textSec }}><span style={{ fontSize: 16 }}>{b.emoji || '✅'}</span>{item}</li>)}</ul></div>;
                     if (bType === 'loading') return <LoadingBlock key={i} title={b.title} items={b.items} T={T} onDone={advancePage} />;
+                    if (bType === 'yes-no') return <div key={i} style={{ marginBottom: 12 }}><h3 style={{ fontSize: '1.1rem', fontWeight: 700, textAlign: 'center', marginBottom: 16, color: T.text }}>{b.text}</h3><div style={{ display: 'flex', gap: 12 }}>{[{ label: b.yesLabel || 'Sim', emoji: b.yesEmoji || '✅', val: 'yes' }, { label: b.noLabel || 'Não', emoji: b.noEmoji || '🚫', val: 'no' }].map((opt, oi) => <div key={oi} style={{ flex: 1, padding: '18px 12px', borderRadius: 16, border: `2px solid ${answers[pageIndex] === opt.val ? T.primary : T.border}`, background: answers[pageIndex] === opt.val ? `rgba(${T.rgb},.06)` : T.card, cursor: 'pointer', textAlign: 'center', transition: 'all 0.2s' }} onClick={() => { setAnswers(a => ({ ...a, [pageIndex]: opt.val })); recordEvent(quiz.id, 'answer', { questionIndex: pageIndex, value: opt.val }); setTimeout(advancePage, 400); }}><div style={{ fontSize: '2rem', marginBottom: 6 }}>{opt.emoji}</div><div style={{ fontWeight: 600, fontSize: '0.95rem', color: T.text }}>{opt.label}</div></div>)}</div></div>;
+                    if (bType === 'before-after') return <div key={i} style={{ marginBottom: 12 }}><h3 style={{ fontSize: '1rem', fontWeight: 700, textAlign: 'center', marginBottom: 12, color: T.text }}>{b.title}</h3><div style={{ display: 'flex', gap: 12 }}>{[{ label: b.beforeLabel || 'Antes', img: b.beforeImage, color: '#ef4444' }, { label: b.afterLabel || 'Depois', img: b.afterImage, color: '#22c55e' }].map((side, si) => <div key={si} style={{ flex: 1, borderRadius: 14, overflow: 'hidden', border: `2px solid ${side.color}20`, background: T.card }}>{side.img ? <img src={side.img} alt={side.label} style={{ width: '100%', height: 120, objectFit: 'cover' }} /> : <div style={{ width: '100%', height: 120, background: `${side.color}10`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 32 }}>{si === 0 ? '😔' : '😊'}</div>}<div style={{ padding: '8px 10px', textAlign: 'center', fontWeight: 700, fontSize: '0.82rem', color: side.color, background: `${side.color}08` }}>{side.label}</div></div>)}</div></div>;
+                    if (bType === 'insight') return <div key={i} style={{ background: `rgba(${T.rgb},.04)`, borderRadius: 16, padding: '16px 14px', border: `1px solid rgba(${T.rgb},.1)`, marginBottom: 12 }}><h4 style={{ fontSize: '0.95rem', fontWeight: 700, color: T.primary, marginBottom: 6 }}>{b.title || '💡 Dica'}</h4><p style={{ fontSize: '0.88rem', color: T.textSec, margin: 0, lineHeight: 1.6 }}>{b.body}</p></div>;
                     if (bType === 'choice') return <div key={i} style={{ marginBottom: 12 }}><h3 style={{ fontSize: '1.1rem', fontWeight: 700, textAlign: 'center', marginBottom: 12, color: T.text }}>{b.text}</h3>{(b.options || []).map((opt, oi) => <div key={oi} style={S.optionCard(false)} onClick={() => { setAnswers(a => ({ ...a, [pageIndex]: oi })); recordEvent(quiz.id, 'answer', { questionIndex: pageIndex, optionIndex: oi }); setTimeout(advancePage, 400); }}>{typeof opt === 'string' ? opt : <><span style={{ fontSize: '1.3rem' }}>{opt.emoji}</span><span style={{ flex: 1 }}>{opt.text}</span></>}</div>)}</div>;
-                    if (bType === 'capture') return <div key={i} style={{ marginBottom: 12 }}><h3 style={{ fontSize: '1.1rem', fontWeight: 700, textAlign: 'center', marginBottom: 8 }}>{b.title}</h3>{b.subtitle && <p style={{ textAlign: 'center', color: T.textSec, fontSize: '0.85rem', marginBottom: 14 }}>{b.subtitle}</p>}<form onSubmit={e => { e.preventDefault(); saveLead(quiz.id, { ...leadData, date: new Date().toISOString() }); advancePage(); }} style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>{(b.fields || ['name', 'email']).includes('name') && <input style={{ padding: '12px 16px', borderRadius: 12, border: `1.5px solid ${T.border}`, fontSize: '0.9rem', outline: 'none' }} placeholder="Seu nome" value={leadData.name} onChange={e => setLeadData(d => ({ ...d, name: e.target.value }))} />}{(b.fields || ['name', 'email']).includes('email') && <input type="email" required style={{ padding: '12px 16px', borderRadius: 12, border: `1.5px solid ${T.border}`, fontSize: '0.9rem', outline: 'none' }} placeholder="Seu email" value={leadData.email} onChange={e => setLeadData(d => ({ ...d, email: e.target.value }))} />}<button type="submit" style={S.btn(!leadData.email)}>{b.buttonText || 'Continuar →'}</button></form></div>;
+                    if (bType === 'likert') return (() => { const opts = b.options || []; const selected = answers[pageIndex]; return <div key={i} style={{ marginBottom: 12 }}><h3 style={{ fontSize: '1.1rem', fontWeight: 700, textAlign: 'center', marginBottom: 12, color: T.text }}>{b.text}</h3>{opts.map((o, oi) => <div key={oi} style={{ ...S.optionCard(selected === oi), marginBottom: 6 }} onClick={() => { setAnswers(a => ({ ...a, [pageIndex]: oi })); recordEvent(quiz.id, 'answer', { questionIndex: pageIndex, value: o.value }); setTimeout(advancePage, 400); }}><span style={{ flex: 1 }}>{o.text}</span></div>)}</div>; })();
+                    if (bType === 'statement') return <div key={i} style={{ marginBottom: 12 }}><div style={{ background: `rgba(${T.rgb},.04)`, borderRadius: 16, padding: '16px 14px', border: `1px solid rgba(${T.rgb},.1)`, marginBottom: 14, textAlign: 'center' }}><p style={{ fontStyle: 'italic', fontSize: '1rem', color: T.text, margin: 0, lineHeight: 1.6 }}>"{b.quote}"</p></div><h3 style={{ fontSize: '1rem', fontWeight: 700, textAlign: 'center', marginBottom: 10, color: T.text }}>{b.text}</h3>{(b.options || []).map((o, oi) => <div key={oi} style={{ ...S.optionCard(answers[pageIndex] === oi), marginBottom: 6 }} onClick={() => { setAnswers(a => ({ ...a, [pageIndex]: oi })); recordEvent(quiz.id, 'answer', { questionIndex: pageIndex, optionIndex: oi }); setTimeout(advancePage, 400); }}><span style={{ flex: 1 }}>{typeof o === 'string' ? o : o.text}</span></div>)}</div>;
+                    if (bType === 'capture') return <div key={i} style={{ marginBottom: 12 }}><h3 style={{ fontSize: '1.1rem', fontWeight: 700, textAlign: 'center', marginBottom: 8 }}>{b.title}</h3>{b.subtitle && <p style={{ textAlign: 'center', color: T.textSec, fontSize: '0.85rem', marginBottom: 14 }}>{b.subtitle}</p>}<form onSubmit={e => { e.preventDefault(); saveLead(quiz.id, { ...leadData, answers, date: new Date().toISOString() }); recordEvent(quiz.id, 'complete'); advancePage(); }} style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>{(b.fields || ['name', 'email']).includes('name') && <input style={{ padding: '12px 16px', borderRadius: 12, border: `1.5px solid ${T.border}`, fontSize: '0.9rem', outline: 'none' }} placeholder="Seu nome" value={leadData.name} onChange={e => setLeadData(d => ({ ...d, name: e.target.value }))} />}{(b.fields || ['name', 'email']).includes('email') && <input type="email" required style={{ padding: '12px 16px', borderRadius: 12, border: `1.5px solid ${T.border}`, fontSize: '0.9rem', outline: 'none' }} placeholder="Seu email" value={leadData.email} onChange={e => setLeadData(d => ({ ...d, email: e.target.value }))} />}<button type="submit" style={S.btn(!leadData.email)}>{b.buttonText || 'Continuar →'}</button></form></div>;
                     if (bType === 'bmi') return <BMIBlock key={i} page={b} pages={pages} answers={answers} T={T} onDone={advancePage} />;
                     if (bType === 'scroll-picker') return <ScrollPickerBlock key={i} page={b} T={T} onDone={(val) => { setAnswers(a => ({ ...a, [pageIndex]: val })); recordEvent(quiz.id, 'answer', { questionIndex: pageIndex, value: val }); advancePage(); }} />;
                     if (bType === 'number-input') return <NumberInputBlock key={i} page={b} T={T} onDone={(val) => { setAnswers(a => ({ ...a, [pageIndex]: val })); recordEvent(quiz.id, 'answer', { questionIndex: pageIndex, value: val }); advancePage(); }} />;
@@ -1176,7 +1172,7 @@ export default function Player() {
                     <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
                       <h2 style={{ fontSize: '1.3rem', fontWeight: 700, textAlign: 'center', marginBottom: 8, color: T.text }}>{p.title || 'Quase lá!'}</h2>
                       {p.subtitle && <p style={{ textAlign: 'center', color: T.textSec, fontSize: '0.9rem', marginBottom: 20 }}>{p.subtitle}</p>}
-                      <form onSubmit={(e) => { e.preventDefault(); saveLead(quiz.id, { ...leadData, date: new Date().toISOString() }); advancePage(); }} style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 12 }}>
+                      <form onSubmit={(e) => { e.preventDefault(); saveLead(quiz.id, { ...leadData, answers, date: new Date().toISOString() }); recordEvent(quiz.id, 'complete'); advancePage(); }} style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 12 }}>
                         {(p.fields || ['name', 'email']).includes('name') && <input style={{ padding: '14px 18px', borderRadius: 14, border: `1.5px solid ${T.border}`, fontSize: '0.95rem', outline: 'none' }} placeholder="Seu nome" value={leadData.name} onChange={e => setLeadData(d => ({ ...d, name: e.target.value }))} />}
                         {(p.fields || ['name', 'email']).includes('email') && <input type="email" style={{ padding: '14px 18px', borderRadius: 14, border: `1.5px solid ${T.border}`, fontSize: '0.95rem', outline: 'none' }} placeholder="Seu email" value={leadData.email} onChange={e => setLeadData(d => ({ ...d, email: e.target.value }))} required />}
                         <button type="submit" style={S.btn(!leadData.email)}>{p.buttonText || 'Continuar →'}</button>
@@ -1222,7 +1218,7 @@ export default function Player() {
                         {p.discount && <div style={{ textAlign: 'center', padding: '4px 12px', borderRadius: 8, background: `rgba(${T.rgb},.1)`, color: T.primary, fontSize: '0.8rem', fontWeight: 700, display: 'inline-block', margin: '8px auto' }}>{p.discount}</div>}
                         {(p.features || []).length > 0 && <ul style={{ listStyle: 'none', padding: 0, margin: '16px 0 0' }}>{p.features.map((f, i) => <li key={i} style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '6px 0', fontSize: '0.88rem', color: T.textSec }}><span style={{ color: T.primary }}>✓</span>{f}</li>)}</ul>}
                       </div>
-                      <button style={S.btn(false)} onClick={() => { if (p.ctaUrl) window.open(p.ctaUrl, '_blank'); else advancePage(); }}>{p.cta || 'Continuar'}</button>
+                      <button style={S.btn(false)} onClick={() => { recordEvent(quiz.id, 'cta_click'); if (p.ctaUrl) window.open(p.ctaUrl, '_blank'); else advancePage(); }}>{p.cta || 'Continuar'}</button>
                     </div>
                   );
                 }
@@ -1283,7 +1279,42 @@ export default function Player() {
                   return <AIResultBlock page={p} quiz={quiz} answers={answers} pages={pages} T={T} />;
                 }
 
-                // Fallback for any unknown type
+                // Fallback for any unknown type — also handle yes-no and before-after as standalone
+                if (type === 'yes-no') {
+                  return (
+                    <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+                      <h2 style={{ fontSize: '1.2rem', fontWeight: 700, textAlign: 'center', marginBottom: 24, color: T.text, lineHeight: 1.5 }}>{p.text}</h2>
+                      <div style={{ display: 'flex', gap: 14, flex: 1, alignItems: 'center' }}>
+                        {[{ label: p.yesLabel || 'Sim', emoji: p.yesEmoji || '✅', val: 'yes' }, { label: p.noLabel || 'Não', emoji: p.noEmoji || '🚫', val: 'no' }].map((opt, oi) => (
+                          <div key={oi} style={{ flex: 1, padding: '24px 16px', borderRadius: 18, border: `2px solid ${answers[pageIndex] === opt.val ? T.primary : T.border}`, background: answers[pageIndex] === opt.val ? `rgba(${T.rgb},.06)` : T.card, cursor: 'pointer', textAlign: 'center', transition: 'all 0.2s', boxShadow: '0 2px 8px rgba(0,0,0,.04)' }}
+                            onClick={() => { setAnswers(a => ({ ...a, [pageIndex]: opt.val })); recordEvent(quiz.id, 'answer', { questionIndex: pageIndex, value: opt.val }); setTimeout(advancePage, 400); }}>
+                            <div style={{ fontSize: '2.5rem', marginBottom: 8 }}>{opt.emoji}</div>
+                            <div style={{ fontWeight: 700, fontSize: '1rem', color: T.text }}>{opt.label}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                }
+
+                if (type === 'before-after') {
+                  return (
+                    <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+                      <h2 style={{ fontSize: '1.2rem', fontWeight: 700, textAlign: 'center', marginBottom: 16, color: T.text }}>{p.title}</h2>
+                      <div style={{ display: 'flex', gap: 14, marginBottom: 16 }}>
+                        {[{ label: p.beforeLabel || 'Antes', img: p.beforeImage, color: '#ef4444' }, { label: p.afterLabel || 'Depois', img: p.afterImage, color: '#22c55e' }].map((side, si) => (
+                          <div key={si} style={{ flex: 1, borderRadius: 16, overflow: 'hidden', border: `2px solid ${side.color}20`, background: T.card, boxShadow: '0 2px 8px rgba(0,0,0,.04)' }}>
+                            {side.img ? <img src={side.img} alt={side.label} style={{ width: '100%', height: 150, objectFit: 'cover' }} /> : <div style={{ width: '100%', height: 150, background: `${side.color}10`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 40 }}>{si === 0 ? '😔' : '😊'}</div>}
+                            <div style={{ padding: '10px 12px', textAlign: 'center', fontWeight: 700, fontSize: '0.88rem', color: side.color, background: `${side.color}08` }}>{side.label}</div>
+                          </div>
+                        ))}
+                      </div>
+                      <button style={S.btn(false)} onClick={advancePage}>Continuar</button>
+                    </div>
+                  );
+                }
+
+                // Fallback for truly unknown types
                 return (
                   <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
                     <p style={{ color: T.textSec, fontSize: '0.9rem' }}>{p.text || p.content || p.title || ''}</p>

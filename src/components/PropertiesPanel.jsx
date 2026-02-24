@@ -479,6 +479,27 @@ export default function PropertiesPanel({ block, onChange, config, onConfigChang
                         <div style={S.section}><div style={S.sTitle}>Altura ({block.height || 40}px)</div><input type="range" min={8} max={120} step={4} value={block.height || 40} onChange={e => u('height', Number(e.target.value))} style={{ width: '100%', accentColor: 'var(--primary)' }} /></div>
                     </>)}
 
+                    {/* Logo */}
+                    {block.type === 'logo' && (<>
+                        <div style={S.section}>
+                            <div style={S.sTitle}>Imagem do Logo</div>
+                            {block.imageUrl && <img src={block.imageUrl.startsWith('/') ? `${import.meta.env.DEV ? 'http://localhost:3001' : ''}${block.imageUrl}` : block.imageUrl} alt="Logo" style={{ maxWidth: '100%', maxHeight: 80, objectFit: 'contain', marginBottom: 6, borderRadius: 6 }} />}
+                            <input type="file" accept="image/*" style={{ marginTop: 6, fontSize: 11 }} onChange={async e => { const f = e.target.files[0]; if (f) { const { uploadImage } = await import('../hooks/useQuizStore'); const url = await uploadImage(f); if (url) u('imageUrl', url); } }} />
+                        </div>
+                        <div style={S.section}><div style={S.sTitle}>Largura máxima ({block.maxWidth || 120}px)</div><input type="range" min={40} max={300} step={10} value={block.maxWidth || 120} onChange={e => u('maxWidth', Number(e.target.value))} style={{ width: '100%', accentColor: 'var(--primary)' }} /></div>
+                        <div style={S.section}>
+                            <div style={S.sTitle}>Posição</div>
+                            <div style={{ display: 'flex', gap: 6 }}>
+                                {['top', 'bottom'].map(pos => (
+                                    <button key={pos} onClick={() => u('position', pos)} style={{ flex: 1, padding: '6px 0', borderRadius: 8, border: `1px solid ${block.position === pos ? 'var(--primary)' : 'var(--border)'}`, background: block.position === pos ? 'rgba(99,102,241,0.06)' : '#fff', cursor: 'pointer', fontSize: '0.78rem', fontWeight: block.position === pos ? 600 : 400, color: block.position === pos ? 'var(--primary)' : 'var(--text-secondary)' }}>
+                                        {pos === 'top' ? 'Topo' : 'Rodapé'}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                        <div style={S.section}><div style={S.sTitle}>Texto alternativo</div><input style={S.input} value={block.alt || ''} onChange={e => u('alt', e.target.value)} placeholder="Logo da empresa" /></div>
+                    </>)}
+
                     {/* HTML/Script */}
                     {block.type === 'html-script' && (<>
                         <div style={S.section}><div style={S.sTitle}>Código HTML/JS</div><textarea style={{ ...S.textarea, minHeight: 120, fontFamily: 'monospace', fontSize: '0.75rem' }} value={block.code || ''} onChange={e => u('code', e.target.value)} placeholder="<div>...</div>" /></div>

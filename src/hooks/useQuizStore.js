@@ -1,10 +1,15 @@
 const API_BASE = import.meta.env.DEV ? 'http://localhost:3001' : '';
 const API = `${API_BASE}/api`;
 
+function authHeaders() {
+    const token = localStorage.getItem('inlead_token');
+    return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
 // ── Quizzes ──────────────────────────────────────────
 export async function getQuizzes() {
     try {
-        const res = await fetch(`${API}/quizzes`);
+        const res = await fetch(`${API}/quizzes`, { headers: authHeaders() });
         return await res.json();
     } catch (_) { return []; }
 }
@@ -21,7 +26,7 @@ export async function saveQuiz(quiz) {
     try {
         const res = await fetch(`${API}/quizzes`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
             body: JSON.stringify(quiz),
         });
         return await res.json();
@@ -34,13 +39,13 @@ export async function saveQuiz(quiz) {
 
 export async function deleteQuiz(id) {
     try {
-        await fetch(`${API}/quizzes/${id}`, { method: 'DELETE' });
+        await fetch(`${API}/quizzes/${id}`, { method: 'DELETE', headers: authHeaders() });
     } catch (_) { }
 }
 
 export async function clearAllQuizzes() {
     try {
-        await fetch(`${API}/quizzes`, { method: 'DELETE' });
+        await fetch(`${API}/quizzes`, { method: 'DELETE', headers: authHeaders() });
     } catch (_) { }
 }
 

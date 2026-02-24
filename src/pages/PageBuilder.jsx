@@ -1,7 +1,7 @@
 // PageBuilder.jsx — Inlead-style layout with sidebar, tabs, canvas, right panel
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { useNavigate, useLocation, useParams } from 'react-router-dom';
-import { Save, Eye, Monitor, Smartphone, ChevronUp, ChevronDown, Trash2, Plus, X, Layout, Bookmark, Settings, Share2, Play, Undo2, Redo2, Grid, MousePointerClick, CheckCircle2, Users, BarChart3, Palette, Package, GitBranch, Globe, Star, Upload, Download, Filter, TrendingDown, Mail, PlayCircle, Lightbulb, Wrench, Clipboard, ArrowRight } from 'lucide-react';
+import { Save, Eye, Monitor, Smartphone, ChevronUp, ChevronDown, Trash2, Plus, X, Layout, Bookmark, Settings, Share2, Play, Undo2, Redo2, Grid, MousePointerClick, CheckCircle2, Users, BarChart3, Palette, Package, GitBranch, Globe, Star, Upload, Download, Filter, TrendingDown, Mail, PlayCircle, Lightbulb, Wrench, Clipboard, ArrowRight, ArrowLeft } from 'lucide-react';
 import { saveQuiz, getQuiz, getAnalytics, getLeads } from '../hooks/useQuizStore';
 import { BLOCK_TYPES, CATEGORIES, createBlock } from '../utils/blockTypes';
 import { getAdminTemplates, getUserTemplates, saveUserTemplate, deleteUserTemplate } from '../utils/templates';
@@ -262,6 +262,7 @@ export default function PageBuilder() {
         return (
             <div className="topbar">
                 <div className="topbar-left">
+                    <button onClick={() => navigate('/')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', padding: 4, marginRight: 4, borderRadius: 6 }} title="Voltar ao início" onMouseOver={e => e.currentTarget.style.color = 'var(--text-primary)'} onMouseOut={e => e.currentTarget.style.color = 'var(--text-muted)'}><ArrowLeft size={16} /></button>
                     <div onClick={() => navigate('/')} style={{ width: 28, height: 28, borderRadius: 7, background: 'linear-gradient(135deg, #6366f1, #8b5cf6)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: 700, fontSize: 10, cursor: 'pointer' }}>QF</div>
                     <div>
                         <div style={{ fontSize: '0.82rem', fontWeight: 600, lineHeight: 1.2 }}>{config.name || 'Sem título'}</div>
@@ -762,12 +763,21 @@ export default function PageBuilder() {
 
             {/* ═══ LEADS TAB ═══ */}
             {activeTab === 'leads' && (() => {
+                const views = analytics?.views || 0;
                 const starts = analytics?.starts || 0;
                 const completes = analytics?.completes || 0;
                 const ctaClicks = (analytics?.events || []).filter(e => e.event === 'cta_click').length;
                 const answerEvents = analytics?.answers || [];
-                const convRate = starts ? ((completes / starts) * 100).toFixed(1) : '0.0';
                 const leadsWithEmail = leads.filter(l => l.email);
+                // Count completions: max of complete events, leads, or people who answered last question
+                const questionStepsKPI = steps.map((step, si) => {
+                    const isQ = step.blocks.some(b => ['choice', 'single-choice', 'yes-no', 'likert', 'statement', 'multi-select'].includes(b.type));
+                    return { stepIndex: si, isQuestion: isQ };
+                }).filter(s => s.isQuestion);
+                const lastQIdxKPI = questionStepsKPI.length > 0 ? questionStepsKPI[questionStepsKPI.length - 1].stepIndex : -1;
+                const lastQAnswersKPI = lastQIdxKPI >= 0 ? answerEvents.filter(a => a.questionIndex === lastQIdxKPI).length : 0;
+                const realCompletes = Math.max(completes, leadsWithEmail.length, lastQAnswersKPI);
+                const convRate = views ? ((ctaClicks / views) * 100).toFixed(1) : '0.0';
 
                 // Build answer distribution per question
                 const answerDist = {};
@@ -806,11 +816,11 @@ export default function PageBuilder() {
                         {/* KPIs */}
                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 12, marginBottom: 20 }}>
                             {[
-                                { icon: <Eye size={14} color="#6366f1" />, label: 'Visitas', value: starts, sub: 'Acessaram o quiz' },
+                                { icon: <Eye size={14} color="#6366f1" />, label: 'Visitas', value: views, sub: 'Acessaram o quiz' },
                                 { icon: <Users size={14} color="#6366f1" />, label: 'Leads', value: leadsWithEmail.length, sub: 'Informaram email' },
-                                { icon: <BarChart3 size={14} color="#6366f1" />, label: 'Conversão', value: convRate + '%', sub: 'Visitas → conclusão' },
+                                { icon: <BarChart3 size={14} color="#6366f1" />, label: 'Conversão', value: convRate + '%', sub: 'Visitas → CTA' },
                                 { icon: <MousePointerClick size={14} color="#6366f1" />, label: 'Cliques CTA', value: ctaClicks, sub: 'Clicaram no botão' },
-                                { icon: <CheckCircle2 size={14} color="#6366f1" />, label: 'Completos', value: completes, sub: 'Finalizaram o quiz' },
+                                { icon: <CheckCircle2 size={14} color="#6366f1" />, label: 'Completos', value: realCompletes, sub: 'Finalizaram o quiz' },
                             ].map(kpi => (
                                 <div key={kpi.label} className="kpi-card">
                                     <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
@@ -832,7 +842,7 @@ export default function PageBuilder() {
                                             <th style={{ padding: '10px 14px', textAlign: 'left', fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-muted)', borderBottom: '1px solid var(--border)' }}>#</th>
                                             <th style={{ padding: '10px 14px', textAlign: 'left', fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-muted)', borderBottom: '1px solid var(--border)' }}>Nome</th>
                                             <th style={{ padding: '10px 14px', textAlign: 'left', fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-muted)', borderBottom: '1px solid var(--border)' }}>Email</th>
-                                            <th style={{ padding: '10px 14px', textAlign: 'left', fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-muted)', borderBottom: '1px solid var(--border)' }}>Resultado</th>
+                                            <th style={{ padding: '10px 14px', textAlign: 'left', fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-muted)', borderBottom: '1px solid var(--border)' }}>Status</th>
                                             <th style={{ padding: '10px 14px', textAlign: 'left', fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-muted)', borderBottom: '1px solid var(--border)' }}>Data</th>
                                         </tr>
                                     </thead>
@@ -846,7 +856,7 @@ export default function PageBuilder() {
                                                 <td style={{ padding: '10px 14px', fontSize: '0.82rem', fontWeight: 500 }}>{lead.name || '—'}</td>
                                                 <td style={{ padding: '10px 14px', fontSize: '0.78rem', color: 'var(--primary)' }}>{lead.email || '—'}</td>
                                                 <td style={{ padding: '10px 14px' }}>
-                                                    {lead.result ? <span style={{ fontSize: '0.72rem', padding: '3px 8px', borderRadius: 6, background: 'rgba(99,102,241,0.08)', color: '#6366f1', fontWeight: 600 }}>{lead.result}</span> : '—'}
+                                                    <span style={{ fontSize: '0.72rem', padding: '3px 8px', borderRadius: 6, background: 'rgba(34,197,94,0.1)', color: '#16a34a', fontWeight: 600 }}>Completou ✅</span>
                                                 </td>
                                                 <td style={{ padding: '10px 14px', fontSize: '0.72rem', color: 'var(--text-muted)' }}>{lead.date ? new Date(lead.date).toLocaleDateString('pt-BR') + ' ' + new Date(lead.date).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '—'}</td>
                                             </tr>
@@ -858,108 +868,337 @@ export default function PageBuilder() {
 
                         {/* ═══ RESULTADOS SUB-TAB ═══ */}
                         {leadSubTab === 'resultados' && (
-                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-                                {/* Result distribution */}
-                                <div className="card" style={{ padding: 20 }}>
-                                    <div style={{ fontSize: '0.85rem', fontWeight: 600, marginBottom: 16, display: 'flex', alignItems: 'center', gap: 6 }}><BarChart3 size={15} /> Distribuição de Resultados</div>
-                                    {Object.keys(resultDist).length === 0 && <div style={{ color: 'var(--text-muted)', fontSize: '0.82rem', textAlign: 'center', padding: 20 }}>Sem dados ainda</div>}
-                                    {Object.entries(resultDist).map(([name, count], i) => (
-                                        <div key={name} style={{ marginBottom: 12 }}>
-                                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-                                                <span style={{ fontSize: '0.78rem', fontWeight: 500 }}>{name}</span>
-                                                <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{count} ({((count / totalResults) * 100).toFixed(0)}%)</span>
-                                            </div>
-                                            <div style={{ height: 8, borderRadius: 4, background: '#f1f5f9', overflow: 'hidden' }}>
-                                                <div style={{ height: '100%', width: `${(count / totalResults) * 100}%`, background: resultColors[i % resultColors.length], borderRadius: 4, transition: 'width 0.5s' }} />
-                                            </div>
-                                        </div>
-                                    ))}
-                                </div>
-                                {/* CTA & funnel */}
-                                <div className="card" style={{ padding: 20 }}>
-                                    <div style={{ fontSize: '0.85rem', fontWeight: 600, marginBottom: 16, display: 'flex', alignItems: 'center', gap: 6 }}><MousePointerClick size={15} /> Métricas de Conversão</div>
-                                    {[{ label: 'Visitas → Quiz', val: starts, pct: 100 },
-                                    { label: 'Quiz → Conclusão', val: completes, pct: starts ? Math.round((completes / starts) * 100) : 0 },
-                                    { label: 'Conclusão → Lead', val: leadsWithEmail.length, pct: starts ? Math.round((leadsWithEmail.length / starts) * 100) : 0 },
-                                    { label: 'Lead → CTA Click', val: ctaClicks, pct: starts ? Math.round((ctaClicks / starts) * 100) : 0 },
-                                    ].map((f, i) => (
-                                        <div key={f.label} style={{ marginBottom: 14 }}>
-                                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-                                                <span style={{ fontSize: '0.78rem', fontWeight: 500 }}>{f.label}</span>
-                                                <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{f.val} ({f.pct}%)</span>
-                                            </div>
-                                            <div style={{ height: 8, borderRadius: 4, background: '#f1f5f9', overflow: 'hidden' }}>
-                                                <div style={{ height: '100%', width: `${f.pct}%`, background: i === 3 ? '#22c55e' : `hsl(${240 - i * 30}, 70%, 60%)`, borderRadius: 4, transition: 'width 0.5s' }} />
-                                            </div>
-                                        </div>
-                                    ))}
-                                </div>
-                            </div>
-                        )}
+                            <>
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+                                    {/* Result distribution */}
+                                    <div className="card" style={{ padding: 20 }}>
+                                        <div style={{ fontSize: '0.85rem', fontWeight: 600, marginBottom: 16, display: 'flex', alignItems: 'center', gap: 6 }}><Users size={15} /> Público-Alvo</div>
+                                        {(() => {
+                                            // Only show demographic/audience-defining questions
+                                            const audienceKeywords = [
+                                                'sexo', 'gênero', 'genero', 'gender',
+                                                'idade', 'faixa etária', 'faixa etaria', 'anos',
+                                                'renda', 'salário', 'salario', 'faturamento', 'ganha', 'orçamento', 'orcamento', 'investir', 'budget', 'quanto',
+                                                'experiência', 'experiencia', 'nível', 'nivel', 'iniciante', 'avançado',
+                                                'profissão', 'profissao', 'trabalha', 'ocupação', 'ocupacao', 'área de atuação',
+                                                'escolaridade', 'formação', 'formacao', 'estuda',
+                                                'região', 'regiao', 'estado', 'cidade', 'onde mora', 'localização',
+                                                'meta', 'objetivo', 'plano',
+                                            ];
+                                            const profileItems = steps.map((step, si) => {
+                                                const qBlock = step.blocks.find(b => ['choice', 'single-choice', 'yes-no', 'likert', 'statement', 'multi-select'].includes(b.type));
+                                                if (!qBlock) return null;
+                                                const qText = (qBlock.text || '').toLowerCase();
+                                                if (!audienceKeywords.some(kw => qText.includes(kw))) return null;
+                                                const options = qBlock.options || [];
+                                                const stepAns = answerEvents.filter(a => a.questionIndex === si);
+                                                if (stepAns.length === 0) return null;
+                                                const counts = {};
+                                                stepAns.forEach(a => { const oi = a.optionIndex ?? 0; counts[oi] = (counts[oi] || 0) + 1; });
+                                                const topOi = Object.entries(counts).sort((a, b) => b[1] - a[1])[0];
+                                                const topIdx = parseInt(topOi[0]);
+                                                const topCount = topOi[1];
+                                                const topOpt = options[topIdx];
+                                                const topText = typeof topOpt === 'string' ? topOpt : (topOpt?.text || `Opção ${topIdx + 1}`);
+                                                const pct = Math.round((topCount / stepAns.length) * 100);
+                                                // Pick emoji based on question type
+                                                let emoji = '📊';
+                                                if (/sex|gên|gen/.test(qText)) emoji = '👤';
+                                                else if (/idade|etár|anos/.test(qText)) emoji = '📅';
+                                                else if (/rend|salár|fatura|orça|invest|quant|budget/.test(qText)) emoji = '💰';
+                                                else if (/experiên|nível|nivel|iniciant/.test(qText)) emoji = '🎯';
+                                                else if (/profiss|trabalh|ocupa|área/.test(qText)) emoji = '💼';
+                                                else if (/escolar|forma|estud/.test(qText)) emoji = '🎓';
+                                                else if (/regi|estado|cidade|mora|localiz/.test(qText)) emoji = '📍';
+                                                else if (/meta|objetivo|plano/.test(qText)) emoji = '🎯';
+                                                return { question: (qBlock.text || '').slice(0, 45), topText, pct, count: topCount, total: stepAns.length, emoji };
+                                            }).filter(Boolean);
 
-                        {/* ═══ PERFORMANCE SUB-TAB ═══ */}
-                        {leadSubTab === 'performance' && (
-                            <div>
-                                {/* Answer distribution per question */}
-                                <div style={{ fontSize: '0.85rem', fontWeight: 600, marginBottom: 14, display: 'flex', alignItems: 'center', gap: 6 }}><BarChart3 size={15} /> Distribuição de Respostas por Pergunta</div>
-                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginBottom: 20 }}>
-                                    {steps.filter(s => s.blocks.some(b => ['choice', 'single-choice', 'yes-no', 'likert', 'statement'].includes(b.type))).map((step, qi) => {
-                                        const choiceBlock = step.blocks.find(b => ['choice', 'single-choice', 'yes-no', 'likert', 'statement'].includes(b.type));
-                                        const opts = choiceBlock?.options || [];
-                                        const dist = answerDist[qi] || {};
-                                        const totalForQ = Object.values(dist).reduce((a, b) => a + b, 0) || 1;
-                                        const barColors = ['#6366f1', '#8b5cf6', '#a78bfa', '#c4b5fd', '#ddd6fe'];
-                                        return (
-                                            <div key={step.id} className="card" style={{ padding: 16 }}>
-                                                <div style={{ fontSize: '0.78rem', fontWeight: 600, marginBottom: 10, color: '#1a1a2e' }}>{step.name}</div>
-                                                {opts.map((opt, oi) => {
-                                                    const text = typeof opt === 'string' ? opt : opt.text;
-                                                    const count = dist[oi] || 0;
-                                                    const pct = ((count / totalForQ) * 100).toFixed(0);
+                                            if (profileItems.length === 0) return <div style={{ color: 'var(--text-muted)', fontSize: '0.82rem', textAlign: 'center', padding: 20 }}>Sem dados demográficos ainda</div>;
+                                            return profileItems.map((q, qi) => (
+                                                <div key={qi} style={{ marginBottom: 10, padding: '10px 12px', background: '#f8f9fb', borderRadius: 8 }}>
+                                                    <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginBottom: 4 }}>{q.question}{q.question.length >= 45 ? '...' : ''}</div>
+                                                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                                        <span style={{ fontSize: '0.78rem', fontWeight: 600, color: '#1e293b' }}>{q.emoji} {q.topText}</span>
+                                                        <span style={{ fontSize: '0.68rem', fontWeight: 600, color: '#6366f1' }}>{q.count}/{q.total} ({q.pct}%)</span>
+                                                    </div>
+                                                </div>
+                                            ));
+                                        })()}
+                                    </div>
+                                    {/* CTA & funnel */}
+                                    <div className="card" style={{ padding: 20 }}>
+                                        <div style={{ fontSize: '0.85rem', fontWeight: 600, marginBottom: 16, display: 'flex', alignItems: 'center', gap: 6 }}><MousePointerClick size={15} /> Métricas de Conversão</div>
+                                        {[{ label: 'Visitas → Quiz', val: starts, pct: 100 },
+                                        { label: 'Quiz → Conclusão', val: realCompletes, pct: starts ? Math.round((realCompletes / starts) * 100) : 0 },
+                                        { label: 'Conclusão → Lead', val: leadsWithEmail.length, pct: realCompletes ? Math.round((leadsWithEmail.length / realCompletes) * 100) : 0 },
+                                        { label: 'Lead → CTA Click', val: ctaClicks, pct: leadsWithEmail.length ? Math.round((ctaClicks / leadsWithEmail.length) * 100) : 0 },
+                                        ].map((f, i) => (
+                                            <div key={f.label} style={{ marginBottom: 14 }}>
+                                                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                                                    <span style={{ fontSize: '0.78rem', fontWeight: 500 }}>{f.label}</span>
+                                                    <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{f.val} ({f.pct}%)</span>
+                                                </div>
+                                                <div style={{ height: 8, borderRadius: 4, background: '#f1f5f9', overflow: 'hidden' }}>
+                                                    <div style={{ height: '100%', width: `${f.pct}%`, background: i === 3 ? '#22c55e' : `hsl(${240 - i * 30}, 70%, 60%)`, borderRadius: 4, transition: 'width 0.5s' }} />
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+
+                                {/* ═══ PERFIL DO PÚBLICO ═══ */}
+                                {(() => {
+                                    // Detect demographic questions by text matching
+                                    const demoKeywords = [
+                                        { key: 'sexo', labels: ['sexo', 'gênero', 'genero', 'gender', 'sex'], emoji: '👤' },
+                                        { key: 'idade', labels: ['idade', 'faixa etária', 'faixa etaria', 'age', 'anos'], emoji: '📅' },
+                                    ];
+                                    const profileColors = ['#6366f1', '#8b5cf6', '#a855f7', '#d946ef', '#ec4899', '#f43f5e', '#f97316', '#eab308'];
+                                    const demoData = [];
+
+                                    demoKeywords.forEach(dk => {
+                                        // Find the step that matches this demographic type
+                                        for (let si = 0; si < steps.length; si++) {
+                                            const step = steps[si];
+                                            const choiceBlock = step.blocks.find(b => ['choice', 'single-choice', 'yes-no', 'likert', 'statement'].includes(b.type));
+                                            if (!choiceBlock) continue;
+                                            const qText = (choiceBlock.text || '').toLowerCase();
+                                            if (!dk.labels.some(kw => qText.includes(kw))) continue;
+
+                                            // Found a demographic question — aggregate answers
+                                            const options = choiceBlock.options || [];
+                                            const stepAnswers = answerEvents.filter(a => a.questionIndex === si);
+                                            const dist = {};
+                                            options.forEach((o, oi) => {
+                                                const optText = typeof o === 'string' ? o : (o.text || `Opção ${oi + 1}`);
+                                                dist[optText] = 0;
+                                            });
+                                            stepAnswers.forEach(a => {
+                                                const oi = a.optionIndex;
+                                                const opt = options[oi];
+                                                const optText = typeof opt === 'string' ? opt : (opt?.text || `Opção ${oi + 1}`);
+                                                dist[optText] = (dist[optText] || 0) + 1;
+                                            });
+
+                                            // Find which option converts best (has most leads)
+                                            // Cross-reference: for each lead, find their answer to this question
+                                            // Since we don't have per-session tracking, use overall distribution
+                                            const total = stepAnswers.length;
+
+                                            demoData.push({
+                                                key: dk.key,
+                                                emoji: dk.emoji,
+                                                question: choiceBlock.text,
+                                                dist,
+                                                total,
+                                                stepIndex: si,
+                                            });
+                                            break; // Only use first match per keyword
+                                        }
+                                    });
+
+                                    if (demoData.length === 0) return null;
+
+                                    return (
+                                        <div style={{ marginTop: 16 }}>
+                                            <div style={{ fontSize: '0.85rem', fontWeight: 600, marginBottom: 14, display: 'flex', alignItems: 'center', gap: 6 }}>
+                                                <Users size={15} /> Perfil do Público
+                                            </div>
+                                            <div style={{ display: 'grid', gridTemplateColumns: `repeat(${Math.min(demoData.length, 3)}, 1fr)`, gap: 16, marginBottom: 16 }}>
+                                                {demoData.map((dd, di) => {
+                                                    const entries = Object.entries(dd.dist).filter(([, v]) => v > 0);
+                                                    const topEntry = entries.sort((a, b) => b[1] - a[1])[0];
                                                     return (
-                                                        <div key={oi} style={{ marginBottom: 6 }}>
-                                                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 2 }}>
-                                                                <span style={{ fontSize: '0.7rem', color: '#475569', maxWidth: '70%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{text}</span>
-                                                                <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>{count} ({pct}%)</span>
+                                                        <div key={dd.key} className="card" style={{ padding: 18 }}>
+                                                            <div style={{ fontSize: '0.78rem', fontWeight: 600, marginBottom: 14, display: 'flex', alignItems: 'center', gap: 6 }}>
+                                                                <span>{dd.emoji}</span> {dd.key === 'sexo' ? 'Sexo' : dd.key === 'idade' ? 'Faixa Etária' : dd.question}
                                                             </div>
-                                                            <div style={{ height: 6, borderRadius: 3, background: '#f1f5f9', overflow: 'hidden' }}>
-                                                                <div style={{ height: '100%', width: `${pct}%`, background: barColors[oi % barColors.length], borderRadius: 3 }} />
-                                                            </div>
+                                                            {dd.total === 0 ? (
+                                                                <div style={{ color: 'var(--text-muted)', fontSize: '0.78rem', textAlign: 'center', padding: 14 }}>Sem dados</div>
+                                                            ) : (
+                                                                <>
+                                                                    {Object.entries(dd.dist).map(([label, count], ci) => {
+                                                                        const pct = dd.total > 0 ? Math.round((count / dd.total) * 100) : 0;
+                                                                        const color = profileColors[ci % profileColors.length];
+                                                                        return (
+                                                                            <div key={label} style={{ marginBottom: 8 }}>
+                                                                                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
+                                                                                    <span style={{ fontSize: '0.72rem', fontWeight: 500, color: '#334155' }}>{label}</span>
+                                                                                    <span style={{ fontSize: '0.68rem', fontWeight: 600, color }}>{count} ({pct}%)</span>
+                                                                                </div>
+                                                                                <div style={{ height: 7, borderRadius: 4, background: '#f1f5f9', overflow: 'hidden' }}>
+                                                                                    <div style={{ height: '100%', width: `${Math.max(pct, 2)}%`, background: color, borderRadius: 4, transition: 'width 0.5s' }} />
+                                                                                </div>
+                                                                            </div>
+                                                                        );
+                                                                    })}
+                                                                    {topEntry && (
+                                                                        <div style={{ marginTop: 10, padding: '8px 10px', background: '#f0fdf4', borderRadius: 6, border: '1px solid #bbf7d0', fontSize: '0.7rem', color: '#166534' }}>
+                                                                            👑 Maioria: <strong>{topEntry[0]}</strong> ({Math.round((topEntry[1] / dd.total) * 100)}%)
+                                                                        </div>
+                                                                    )}
+                                                                </>
+                                                            )}
                                                         </div>
                                                     );
                                                 })}
                                             </div>
-                                        );
-                                    })}
-                                </div>
-                                {Object.keys(answerDist).length === 0 && <div style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.85rem', padding: 30 }}>Sem dados de performance ainda — os dados aparecerão quando alguém responder o quiz</div>}
 
-                                {/* Conversion funnel */}
-                                <div style={{ fontSize: '0.85rem', fontWeight: 600, marginBottom: 14, display: 'flex', alignItems: 'center', gap: 6 }}><TrendingDown size={15} /> Funil de Conversão</div>
-                                <div className="card" style={{ padding: 20 }}>
-                                    {[{ label: 'Visitantes', val: starts, icon: <Eye size={14} color="#6366f1" /> },
-                                    { label: 'Iniciaram Quiz', val: Math.max(starts, answerEvents.length > 0 ? 1 : 0), icon: <PlayCircle size={14} color="#6366f1" /> },
-                                    { label: 'Completaram', val: completes, icon: <CheckCircle2 size={14} color="#22c55e" /> },
-                                    { label: 'Deixaram Email', val: leadsWithEmail.length, icon: <Mail size={14} color="#6366f1" /> },
-                                    { label: 'Clicaram CTA', val: ctaClicks, icon: <MousePointerClick size={14} color="#22c55e" /> },
-                                    ].map((f, i, arr) => {
-                                        const maxVal = arr[0].val || 1;
-                                        const pct = Math.round((f.val / maxVal) * 100);
-                                        return (
-                                            <div key={f.label} style={{ marginBottom: i < arr.length - 1 ? 8 : 0 }}>
-                                                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
-                                                    {f.icon}
-                                                    <span style={{ fontSize: '0.82rem', fontWeight: 500, flex: 1 }}>{f.label}</span>
-                                                    <span style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--primary)' }}>{f.val}</span>
-                                                    <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)', width: 40, textAlign: 'right' }}>{pct}%</span>
+                                            {/* Best converting profile insight */}
+                                            {demoData.some(d => d.total > 0) && leadsWithEmail.length > 0 && (
+                                                <div className="card" style={{ padding: 16, background: 'linear-gradient(135deg, #ede9fe 0%, #e0e7ff 100%)', border: '1px solid #c7d2fe' }}>
+                                                    <div style={{ fontSize: '0.78rem', fontWeight: 600, color: '#4338ca', marginBottom: 6, display: 'flex', alignItems: 'center', gap: 6 }}>
+                                                        <TrendingDown size={14} /> Público que Mais Converte
+                                                    </div>
+                                                    <div style={{ fontSize: '0.72rem', color: '#3730a3', lineHeight: 1.5 }}>
+                                                        {demoData.map(dd => {
+                                                            const top = Object.entries(dd.dist).sort((a, b) => b[1] - a[1])[0];
+                                                            if (!top || top[1] === 0) return null;
+                                                            return (
+                                                                <span key={dd.key} style={{ display: 'inline-block', marginRight: 16, padding: '4px 10px', background: 'rgba(255,255,255,.7)', borderRadius: 6, marginBottom: 4 }}>
+                                                                    {dd.emoji} <strong>{top[0]}</strong>
+                                                                </span>
+                                                            );
+                                                        })}
+                                                        <span style={{ display: 'block', marginTop: 6, fontSize: '0.68rem', color: '#6366f1' }}>
+                                                            Baseado em {leadsWithEmail.length} lead{leadsWithEmail.length > 1 ? 's' : ''} convertido{leadsWithEmail.length > 1 ? 's' : ''}
+                                                        </span>
+                                                    </div>
                                                 </div>
-                                                <div style={{ height: 10, borderRadius: 5, background: '#f1f5f9', overflow: 'hidden' }}>
-                                                    <div style={{ height: '100%', width: `${pct}%`, background: `linear-gradient(90deg, #6366f1, ${i > 2 ? '#22c55e' : '#818cf8'})`, borderRadius: 5, transition: 'width 0.5s' }} />
+                                            )}
+                                        </div>
+                                    );
+                                })()}
+                            </>)}
+
+                        {/* ═══ PERFORMANCE SUB-TAB ═══ */}
+                        {leadSubTab === 'performance' && (
+                            <div>
+                                {(() => {
+                                    // Build retention data — map answer events to their step positions
+                                    const questionSteps = steps.map((step, si) => {
+                                        const isQ = step.blocks.some(b => ['choice', 'single-choice', 'yes-no', 'likert', 'statement', 'multi-select'].includes(b.type));
+                                        return { step, stepIndex: si, isQuestion: isQ };
+                                    }).filter(s => s.isQuestion);
+
+                                    const answersPerPage = {};
+                                    answerEvents.forEach(a => {
+                                        const qi = a.questionIndex;
+                                        if (qi !== undefined) answersPerPage[qi] = (answersPerPage[qi] || 0) + 1;
+                                    });
+
+                                    const retentionData = questionSteps.map((qs, i) => ({
+                                        name: qs.step.name || `Pergunta ${i + 1}`,
+                                        count: answersPerPage[qs.stepIndex] || 0,
+                                    }));
+
+                                    const baseline = Math.max(views, starts, retentionData[0]?.count || 0, 1);
+                                    const maxCount = Math.max(...retentionData.map(r => r.count), 1);
+
+                                    let bigDrop = 0, bigDropIdx = -1;
+                                    for (let i = 1; i < retentionData.length; i++) {
+                                        const prev = retentionData[i - 1].count;
+                                        const diff = prev - retentionData[i].count;
+                                        if (prev > 0 && diff > bigDrop) { bigDrop = diff; bigDropIdx = i; }
+                                    }
+                                    const dropPct = bigDropIdx >= 0 && retentionData[bigDropIdx - 1]?.count > 0
+                                        ? Math.round((bigDrop / retentionData[bigDropIdx - 1].count) * 100) : 0;
+                                    const completionRate = views > 0 ? Math.round((realCompletes / views) * 100) : 0;
+
+                                    return (
+                                        <>
+                                            {/* KPI cards */}
+                                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginBottom: 20 }}>
+                                                <div className="card" style={{ padding: '14px 16px', textAlign: 'center' }}>
+                                                    <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', fontWeight: 500, marginBottom: 4, textTransform: 'uppercase', letterSpacing: '.05em' }}>Visitantes</div>
+                                                    <div style={{ fontSize: '1.4rem', fontWeight: 800, color: '#1a1a2e' }}>{views}</div>
+                                                </div>
+                                                <div className="card" style={{ padding: '14px 16px', textAlign: 'center' }}>
+                                                    <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', fontWeight: 500, marginBottom: 4, textTransform: 'uppercase', letterSpacing: '.05em' }}>Conclusão</div>
+                                                    <div style={{ fontSize: '1.4rem', fontWeight: 800, color: completionRate >= 50 ? '#16a34a' : completionRate >= 20 ? '#f59e0b' : '#dc2626' }}>{completionRate}%</div>
+                                                </div>
+                                                <div className="card" style={{ padding: '14px 16px', textAlign: 'center' }}>
+                                                    <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', fontWeight: 500, marginBottom: 4, textTransform: 'uppercase', letterSpacing: '.05em' }}>Leads</div>
+                                                    <div style={{ fontSize: '1.4rem', fontWeight: 800, color: '#6366f1' }}>{leadsWithEmail.length}</div>
                                                 </div>
                                             </div>
-                                        );
-                                    })}
-                                </div>
+
+
+                                            {/* Conversion funnel */}
+                                            <div style={{ fontSize: '0.85rem', fontWeight: 600, marginBottom: 14, marginTop: 8, display: 'flex', alignItems: 'center', gap: 6 }}><TrendingDown size={15} /> Funil de Conversão</div>
+                                            <div className="card" style={{ padding: 20, marginBottom: 16 }}>
+                                                {(() => {
+                                                    // Count completions: people who answered the last question step
+                                                    const questionStepsForFunnel = steps.map((step, si) => {
+                                                        const isQ = step.blocks.some(b => ['choice', 'single-choice', 'yes-no', 'likert', 'statement', 'multi-select'].includes(b.type));
+                                                        return { stepIndex: si, isQuestion: isQ };
+                                                    }).filter(s => s.isQuestion);
+                                                    const lastQIdx = questionStepsForFunnel.length > 0 ? questionStepsForFunnel[questionStepsForFunnel.length - 1].stepIndex : -1;
+                                                    const lastQAnswers = lastQIdx >= 0 ? (answerEvents.filter(a => a.questionIndex === lastQIdx).length) : 0;
+                                                    const realCompletesF = Math.max(completes, lastQAnswers, leadsWithEmail.length);
+
+                                                    return [
+                                                        { label: 'Visitantes', val: views, icon: <Eye size={14} color="#6366f1" /> },
+                                                        { label: 'Iniciaram Quiz', val: Math.max(starts, answerEvents.length > 0 ? 1 : 0), icon: <PlayCircle size={14} color="#6366f1" /> },
+                                                        { label: 'Completaram', val: realCompletesF, icon: <CheckCircle2 size={14} color="#22c55e" /> },
+                                                        { label: 'Deixaram Email', val: leadsWithEmail.length, icon: <Mail size={14} color="#6366f1" /> },
+                                                        { label: 'Clicaram CTA', val: ctaClicks, icon: <MousePointerClick size={14} color="#22c55e" /> },
+                                                    ].map((f, i, arr) => {
+                                                        const maxVal = arr[0].val || 1;
+                                                        const pct = Math.round((f.val / maxVal) * 100);
+                                                        return (
+                                                            <div key={f.label} style={{ marginBottom: i < arr.length - 1 ? 8 : 0 }}>
+                                                                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
+                                                                    {f.icon}
+                                                                    <span style={{ fontSize: '0.82rem', fontWeight: 500, flex: 1 }}>{f.label}</span>
+                                                                    <span style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--primary)' }}>{f.val}</span>
+                                                                    <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)', width: 40, textAlign: 'right' }}>{pct}%</span>
+                                                                </div>
+                                                                <div style={{ height: 10, borderRadius: 5, background: '#f1f5f9', overflow: 'hidden' }}>
+                                                                    <div style={{ height: '100%', width: `${pct}%`, background: `linear-gradient(90deg, #6366f1, ${i > 2 ? '#22c55e' : '#818cf8'})`, borderRadius: 5, transition: 'width 0.5s' }} />
+                                                                </div>
+                                                            </div>
+                                                        );
+                                                    });
+                                                })()}
+                                            </div>
+
+                                            {/* Retention — compact all steps */}
+                                            <div style={{ fontSize: '0.85rem', fontWeight: 600, marginBottom: 12, display: 'flex', alignItems: 'center', gap: 6 }}><BarChart3 size={15} /> Retenção por Etapa</div>
+                                            <div className="card" style={{ padding: '14px 16px', marginBottom: 16 }}>
+                                                {retentionData.length === 0 ? (
+                                                    <div style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.85rem', padding: 20 }}>Sem dados ainda</div>
+                                                ) : (
+                                                    <>
+                                                        {retentionData.map((r, i) => {
+                                                            const pct = baseline > 0 ? Math.round((r.count / baseline) * 100) : 0;
+                                                            const isWorst = i === bigDropIdx;
+                                                            const barColor = pct >= 70 ? '#22c55e' : pct >= 40 ? '#f59e0b' : '#ef4444';
+                                                            return (
+                                                                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                                                                    <span style={{ fontSize: '0.65rem', color: '#94a3b8', width: 20, textAlign: 'right', flexShrink: 0 }}>{i + 1}</span>
+                                                                    <div style={{ flex: 1, minWidth: 0 }}>
+                                                                        <div style={{ height: 6, borderRadius: 3, background: '#f1f5f9', overflow: 'hidden' }}>
+                                                                            <div style={{ height: '100%', width: `${Math.max(pct, 2)}%`, background: isWorst ? '#ef4444' : barColor, borderRadius: 3, transition: 'width 0.4s' }} />
+                                                                        </div>
+                                                                    </div>
+                                                                    <span style={{ fontSize: '0.68rem', fontWeight: 600, color: isWorst ? '#dc2626' : barColor, width: 36, textAlign: 'right', flexShrink: 0 }}>{pct}%</span>
+                                                                </div>
+                                                            );
+                                                        })}
+                                                        {bigDropIdx >= 0 && dropPct > 0 && (
+                                                            <div style={{ marginTop: 10, padding: '8px 10px', background: '#fef2f2', borderRadius: 6, border: '1px solid #fecaca', fontSize: '0.72rem' }}>
+                                                                <span style={{ color: '#dc2626', fontWeight: 600 }}>📉 -{dropPct}%</span>
+                                                                <span style={{ color: '#7f1d1d' }}> na etapa {bigDropIdx + 1}: {retentionData[bigDropIdx]?.name}</span>
+                                                            </div>
+                                                        )}
+                                                    </>
+                                                )}
+                                            </div>
+                                        </>
+                                    );
+                                })()}
                             </div>
                         )}
                     </div>
@@ -1118,433 +1357,446 @@ export default function PageBuilder() {
                         </div>
                     </div>
                 );
-            })()}
+            })()
+            }
 
             {/* ═══ DOMÍNIO TAB ═══ */}
-            {activeTab === 'dominio' && (
-                <div style={{ flex: 1, overflowY: 'auto', padding: 24, maxWidth: 700, margin: '0 auto' }}>
-                    <DomainSettings quizId={quizId || editId} />
-                </div>
-            )}
+            {
+                activeTab === 'dominio' && (
+                    <div style={{ flex: 1, overflowY: 'auto', padding: 24, maxWidth: 700, margin: '0 auto' }}>
+                        <DomainSettings quizId={quizId || editId} />
+                    </div>
+                )
+            }
 
             {/* Share modal */}
-            {showShare && !saved && (
-                <div className="modal-overlay" onClick={() => setShowShare(false)}>
-                    <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 420 }}>
-                        <div className="modal-header">
-                            <h3 className="modal-title">Compartilhar</h3>
-                            <button className="modal-close" onClick={() => setShowShare(false)}>×</button>
+            {
+                showShare && !saved && (
+                    <div className="modal-overlay" onClick={() => setShowShare(false)}>
+                        <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 420 }}>
+                            <div className="modal-header">
+                                <h3 className="modal-title">Compartilhar</h3>
+                                <button className="modal-close" onClick={() => setShowShare(false)}>×</button>
+                            </div>
+                            <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>Publique primeiro para gerar o link de compartilhamento.</p>
+                            <button className="btn btn-accent btn-full" style={{ marginTop: 16 }} onClick={handlePublish}>Publicar agora</button>
                         </div>
-                        <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>Publique primeiro para gerar o link de compartilhamento.</p>
-                        <button className="btn btn-accent btn-full" style={{ marginTop: 16 }} onClick={handlePublish}>Publicar agora</button>
                     </div>
-                </div>
-            )}
+                )
+            }
 
             {/* Template modal */}
-            {showTemplates && (() => {
-                const adminTs = getAdminTemplates();
-                const userTs = getUserTemplates();
-                return (
-                    <div className="modal-overlay" onClick={() => setShowTemplates(false)}>
-                        <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 640, maxHeight: '85vh', overflow: 'auto' }}>
-                            <div className="modal-header">
-                                <h3 className="modal-title" style={{ display: 'flex', alignItems: 'center', gap: 6 }}><Package size={16} /> Templates & Blocos Prontos</h3>
-                                <button className="modal-close" onClick={() => setShowTemplates(false)}>×</button>
-                            </div>
+            {
+                showTemplates && (() => {
+                    const adminTs = getAdminTemplates();
+                    const userTs = getUserTemplates();
+                    return (
+                        <div className="modal-overlay" onClick={() => setShowTemplates(false)}>
+                            <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 640, maxHeight: '85vh', overflow: 'auto' }}>
+                                <div className="modal-header">
+                                    <h3 className="modal-title" style={{ display: 'flex', alignItems: 'center', gap: 6 }}><Package size={16} /> Templates & Blocos Prontos</h3>
+                                    <button className="modal-close" onClick={() => setShowTemplates(false)}>×</button>
+                                </div>
 
-                            {/* Pre-built steps */}
-                            <div className="label" style={{ marginBottom: 8 }}>🧩 Blocos Prontos</div>
-                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, marginBottom: 20 }}>
-                                {READY_STEPS.map(rs => (
-                                    <div key={rs.id} onClick={() => {
-                                        const ns = makeStep(rs.name);
-                                        ns.blocks = JSON.parse(JSON.stringify(rs.blocks));
-                                        setSteps(s => [...s, ns]);
-                                        setActiveStepIdx(steps.length);
-                                        setSelectedBlockIdx(null);
-                                        setShowTemplates(false);
-                                        showToastMsg(`${rs.name} adicionado!`);
-                                    }} style={{ padding: 12, background: '#fff', border: '1px solid var(--border)', borderRadius: 10, cursor: 'pointer', textAlign: 'center', transition: 'var(--transition)' }}
-                                        onMouseOver={e => e.currentTarget.style.borderColor = rs.color}
-                                        onMouseOut={e => e.currentTarget.style.borderColor = 'var(--border)'}>
-                                        <div style={{ fontSize: 24, marginBottom: 4 }}>{rs.icon}</div>
-                                        <div style={{ fontSize: '0.78rem', fontWeight: 600, color: '#2d3748' }}>{rs.name}</div>
-                                        <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', marginTop: 2 }}>{rs.desc}</div>
-                                    </div>
-                                ))}
-                            </div>
-
-                            {adminTs.length > 0 && (<>
-                                <div className="label" style={{ marginBottom: 8 }}>🔒 Templates globais</div>
-                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 16 }}>
-                                    {adminTs.map(t => (
-                                        <div key={t.id} className="card" onClick={() => loadTemplate(t)} style={{ padding: 14, cursor: 'pointer' }}>
-                                            <div style={{ fontSize: '0.85rem', fontWeight: 600 }}>{t.name}</div>
-                                            <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: 2 }}>{t.desc}</div>
+                                {/* Pre-built steps */}
+                                <div className="label" style={{ marginBottom: 8 }}>🧩 Blocos Prontos</div>
+                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, marginBottom: 20 }}>
+                                    {READY_STEPS.map(rs => (
+                                        <div key={rs.id} onClick={() => {
+                                            const ns = makeStep(rs.name);
+                                            ns.blocks = JSON.parse(JSON.stringify(rs.blocks));
+                                            setSteps(s => [...s, ns]);
+                                            setActiveStepIdx(steps.length);
+                                            setSelectedBlockIdx(null);
+                                            setShowTemplates(false);
+                                            showToastMsg(`${rs.name} adicionado!`);
+                                        }} style={{ padding: 12, background: '#fff', border: '1px solid var(--border)', borderRadius: 10, cursor: 'pointer', textAlign: 'center', transition: 'var(--transition)' }}
+                                            onMouseOver={e => e.currentTarget.style.borderColor = rs.color}
+                                            onMouseOut={e => e.currentTarget.style.borderColor = 'var(--border)'}>
+                                            <div style={{ fontSize: 24, marginBottom: 4 }}>{rs.icon}</div>
+                                            <div style={{ fontSize: '0.78rem', fontWeight: 600, color: '#2d3748' }}>{rs.name}</div>
+                                            <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', marginTop: 2 }}>{rs.desc}</div>
                                         </div>
                                     ))}
                                 </div>
-                            </>)}
-                            {userTs.length > 0 && (<>
-                                <div className="label" style={{ marginBottom: 8 }}>📁 Meus templates</div>
-                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 16 }}>
-                                    {userTs.map(t => (
-                                        <div key={t.id} className="card" style={{ padding: 14, position: 'relative' }}>
-                                            <div onClick={() => loadTemplate(t)} style={{ cursor: 'pointer' }}>
+
+                                {adminTs.length > 0 && (<>
+                                    <div className="label" style={{ marginBottom: 8 }}>🔒 Templates globais</div>
+                                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 16 }}>
+                                        {adminTs.map(t => (
+                                            <div key={t.id} className="card" onClick={() => loadTemplate(t)} style={{ padding: 14, cursor: 'pointer' }}>
                                                 <div style={{ fontSize: '0.85rem', fontWeight: 600 }}>{t.name}</div>
                                                 <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: 2 }}>{t.desc}</div>
                                             </div>
-                                            <button onClick={() => { if (confirm('Deletar?')) { deleteUserTemplate(t.id); setShowTemplates(false); setTimeout(() => setShowTemplates(true), 10); } }}
-                                                style={{ position: 'absolute', top: 8, right: 8, background: 'none', border: 'none', cursor: 'pointer', color: '#d1d5db', padding: 2 }}><Trash2 size={12} /></button>
-                                        </div>
-                                    ))}
-                                </div>
-                            </>)}
-                            <button className="btn btn-ghost btn-full" onClick={() => { setShowTemplates(false); if (!steps.length) addStep('Etapa 1'); }}>✏️ Começar do zero</button>
+                                        ))}
+                                    </div>
+                                </>)}
+                                {userTs.length > 0 && (<>
+                                    <div className="label" style={{ marginBottom: 8 }}>📁 Meus templates</div>
+                                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 16 }}>
+                                        {userTs.map(t => (
+                                            <div key={t.id} className="card" style={{ padding: 14, position: 'relative' }}>
+                                                <div onClick={() => loadTemplate(t)} style={{ cursor: 'pointer' }}>
+                                                    <div style={{ fontSize: '0.85rem', fontWeight: 600 }}>{t.name}</div>
+                                                    <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: 2 }}>{t.desc}</div>
+                                                </div>
+                                                <button onClick={() => { if (confirm('Deletar?')) { deleteUserTemplate(t.id); setShowTemplates(false); setTimeout(() => setShowTemplates(true), 10); } }}
+                                                    style={{ position: 'absolute', top: 8, right: 8, background: 'none', border: 'none', cursor: 'pointer', color: '#d1d5db', padding: 2 }}><Trash2 size={12} /></button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </>)}
+                                <button className="btn btn-ghost btn-full" onClick={() => { setShowTemplates(false); if (!steps.length) addStep('Etapa 1'); }}>✏️ Começar do zero</button>
+                            </div>
                         </div>
-                    </div>
-                );
-            })()}
+                    );
+                })()
+            }
 
             {/* AI Step Generation Modal */}
-            {showAiStepModal && (
-                <div className="modal-overlay" onClick={() => !aiStepLoading && setShowAiStepModal(false)}>
-                    <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 480 }}>
-                        <div className="modal-header">
-                            <h3 className="modal-title">🤖 Criar Etapa por IA</h3>
-                            <button className="modal-close" onClick={() => !aiStepLoading && setShowAiStepModal(false)}>×</button>
-                        </div>
-                        <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', marginBottom: 12 }}>
-                            Descreva a etapa que deseja criar e a IA gerará os blocos automaticamente.
-                        </p>
-                        <textarea
-                            value={aiStepPrompt}
-                            onChange={e => setAiStepPrompt(e.target.value)}
-                            placeholder="Ex: Pergunta sobre hábitos alimentares com 4 opções de resposta e uma imagem motivacional"
-                            style={{ width: '100%', minHeight: 100, padding: '10px 12px', borderRadius: 10, border: '1px solid var(--border)', fontSize: '0.82rem', fontFamily: 'inherit', resize: 'vertical', outline: 'none' }}
-                        />
-                        <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
-                            <button className="btn btn-ghost" style={{ flex: 1 }} onClick={() => setShowAiStepModal(false)} disabled={aiStepLoading}>Cancelar</button>
-                            <button className="btn btn-accent" style={{ flex: 1 }} disabled={!aiStepPrompt.trim() || aiStepLoading}
-                                onClick={async () => {
-                                    setAiStepLoading(true);
-                                    try {
-                                        // Try AI generation via the existing generate endpoint
-                                        const prompt = aiStepPrompt.trim();
-                                        // Fallback: generate a reasonable step locally
-                                        const ns = makeStep(prompt.slice(0, 30));
-                                        const hasQuestion = prompt.toLowerCase().includes('pergunt') || prompt.toLowerCase().includes('escolh') || prompt.toLowerCase().includes('opç');
-                                        const hasImage = prompt.toLowerCase().includes('imagem') || prompt.toLowerCase().includes('foto');
-                                        const hasText = prompt.toLowerCase().includes('texto') || prompt.toLowerCase().includes('descri');
-                                        const blocks = [];
-                                        if (hasText) blocks.push(createBlock('text'));
-                                        if (hasImage) blocks.push(createBlock('image'));
-                                        if (hasQuestion) {
-                                            const choiceBlock = createBlock('choice');
-                                            choiceBlock.text = prompt;
-                                            blocks.push(choiceBlock);
-                                        }
-                                        if (!blocks.length) {
-                                            const choiceBlock = createBlock('choice');
-                                            choiceBlock.text = prompt;
-                                            blocks.push(choiceBlock);
-                                        }
-                                        ns.blocks = blocks;
-                                        setSteps(s => [...s, ns]);
-                                        setActiveStepIdx(steps.length);
-                                        setSelectedBlockIdx(null);
-                                        showToastMsg('Etapa criada por IA!');
-                                    } catch { showToastMsg('Erro ao gerar etapa'); }
-                                    setAiStepLoading(false);
-                                    setShowAiStepModal(false);
-                                    setAiStepPrompt('');
-                                }}
-                            >
-                                {aiStepLoading ? '⏳ Gerando...' : '🤖 Gerar Etapa'}
-                            </button>
+            {
+                showAiStepModal && (
+                    <div className="modal-overlay" onClick={() => !aiStepLoading && setShowAiStepModal(false)}>
+                        <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 480 }}>
+                            <div className="modal-header">
+                                <h3 className="modal-title">🤖 Criar Etapa por IA</h3>
+                                <button className="modal-close" onClick={() => !aiStepLoading && setShowAiStepModal(false)}>×</button>
+                            </div>
+                            <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', marginBottom: 12 }}>
+                                Descreva a etapa que deseja criar e a IA gerará os blocos automaticamente.
+                            </p>
+                            <textarea
+                                value={aiStepPrompt}
+                                onChange={e => setAiStepPrompt(e.target.value)}
+                                placeholder="Ex: Pergunta sobre hábitos alimentares com 4 opções de resposta e uma imagem motivacional"
+                                style={{ width: '100%', minHeight: 100, padding: '10px 12px', borderRadius: 10, border: '1px solid var(--border)', fontSize: '0.82rem', fontFamily: 'inherit', resize: 'vertical', outline: 'none' }}
+                            />
+                            <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
+                                <button className="btn btn-ghost" style={{ flex: 1 }} onClick={() => setShowAiStepModal(false)} disabled={aiStepLoading}>Cancelar</button>
+                                <button className="btn btn-accent" style={{ flex: 1 }} disabled={!aiStepPrompt.trim() || aiStepLoading}
+                                    onClick={async () => {
+                                        setAiStepLoading(true);
+                                        try {
+                                            // Try AI generation via the existing generate endpoint
+                                            const prompt = aiStepPrompt.trim();
+                                            // Fallback: generate a reasonable step locally
+                                            const ns = makeStep(prompt.slice(0, 30));
+                                            const hasQuestion = prompt.toLowerCase().includes('pergunt') || prompt.toLowerCase().includes('escolh') || prompt.toLowerCase().includes('opç');
+                                            const hasImage = prompt.toLowerCase().includes('imagem') || prompt.toLowerCase().includes('foto');
+                                            const hasText = prompt.toLowerCase().includes('texto') || prompt.toLowerCase().includes('descri');
+                                            const blocks = [];
+                                            if (hasText) blocks.push(createBlock('text'));
+                                            if (hasImage) blocks.push(createBlock('image'));
+                                            if (hasQuestion) {
+                                                const choiceBlock = createBlock('choice');
+                                                choiceBlock.text = prompt;
+                                                blocks.push(choiceBlock);
+                                            }
+                                            if (!blocks.length) {
+                                                const choiceBlock = createBlock('choice');
+                                                choiceBlock.text = prompt;
+                                                blocks.push(choiceBlock);
+                                            }
+                                            ns.blocks = blocks;
+                                            setSteps(s => [...s, ns]);
+                                            setActiveStepIdx(steps.length);
+                                            setSelectedBlockIdx(null);
+                                            showToastMsg('Etapa criada por IA!');
+                                        } catch { showToastMsg('Erro ao gerar etapa'); }
+                                        setAiStepLoading(false);
+                                        setShowAiStepModal(false);
+                                        setAiStepPrompt('');
+                                    }}
+                                >
+                                    {aiStepLoading ? '⏳ Gerando...' : '🤖 Gerar Etapa'}
+                                </button>
+                            </div>
                         </div>
                     </div>
-                </div>
-            )}
+                )
+            }
 
             {/* Clone Modal — Screenshot-based */}
             {/* Settings Modal */}
-            {showSettings && (
-                <div className="modal-overlay" onClick={() => setShowSettings(false)}>
-                    <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 480 }}>
-                        <div className="modal-header">
-                            <h3 className="modal-title" style={{ display: 'flex', alignItems: 'center', gap: 6 }}><Settings size={16} /> Configurações</h3>
-                            <button className="modal-close" onClick={() => setShowSettings(false)}>×</button>
-                        </div>
-                        <div className="form-group">
-                            <label className="label">Nome do quiz</label>
-                            <input className="input" value={config.name || ''} placeholder="Ex: Quiz de Emagrecimento" onChange={e => updateConfig('name', e.target.value)} />
-                        </div>
-                        <div className="form-group">
-                            <label className="label">Nicho</label>
-                            <select className="input" value={config.niche || 'outro'} onChange={e => updateConfig('niche', e.target.value)}>
-                                {['saude', 'fitness', 'beleza', 'educacao', 'financas', 'tech', 'alimentacao', 'marketing', 'outro'].map(n => (
-                                    <option key={n} value={n}>{n.charAt(0).toUpperCase() + n.slice(1)}</option>
-                                ))}
-                            </select>
-                        </div>
-                        <div style={{ fontSize: '0.78rem', fontWeight: 600, marginBottom: 8, marginTop: 12 }}>Tela de Boas-vindas</div>
-                        <div className="form-group">
-                            <label className="label">Título</label>
-                            <input className="input" value={config.welcomeHeadline || ''} placeholder="Ex: Descubra seu tipo" onChange={e => updateConfig('welcomeHeadline', e.target.value)} />
-                        </div>
-                        <div className="form-group">
-                            <label className="label">Subtítulo</label>
-                            <input className="input" value={config.welcomeSub || ''} placeholder="Ex: Responda e descubra" onChange={e => updateConfig('welcomeSub', e.target.value)} />
-                        </div>
-                        <div className="form-group">
-                            <label className="label">Texto do botão</label>
-                            <input className="input" value={config.welcomeCta || 'Começar →'} placeholder="Começar →" onChange={e => updateConfig('welcomeCta', e.target.value)} />
-                        </div>
-                        <label className="toggle-wrapper" style={{ marginTop: 8 }}>
-                            <label className="toggle"><input type="checkbox" checked={config.collectLead !== false} onChange={e => updateConfig('collectLead', e.target.checked)} /><span className="toggle-slider" /></label>
-                            <span style={{ fontSize: '0.8rem' }}>Coletar leads (nome, email)</span>
-                        </label>
-                        <button className="btn btn-accent btn-full" style={{ marginTop: 16 }} onClick={() => { setShowSettings(false); showToastMsg('Configurações salvas!'); }}>Salvar configurações</button>
-                    </div>
-                </div>
-            )}
-
-            {showCloneModal && (
-                <div className="modal-overlay" onClick={() => !cloneLoading && setShowCloneModal(false)}>
-                    <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 580, maxHeight: '85vh', display: 'flex', flexDirection: 'column' }}>
-                        <div className="modal-header">
-                            <h3 className="modal-title">Clonar Quiz</h3>
-                            <button className="modal-close" onClick={() => !cloneLoading && setShowCloneModal(false)}>×</button>
-                        </div>
-
-                        {!cloneLoading ? (
-                            <div style={{ overflow: 'auto', flex: 1, padding: '0 0 16px' }}>
-                                {/* Tab selector */}
-                                <div style={{ display: 'flex', gap: 0, marginBottom: 16, background: '#f1f5f9', borderRadius: 10, padding: 3 }}>
-                                    {[{ id: 'screenshots', label: 'Screenshots' }, { id: 'json', label: 'Importar JSON' }].map(tab => (
-                                        <button key={tab.id} onClick={() => { setCloneError(null); setCloneMode(tab.id); }}
-                                            style={{
-                                                flex: 1, padding: '8px 0', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: '0.78rem', fontWeight: 600,
-                                                background: cloneMode === tab.id ? '#fff' : 'transparent',
-                                                color: cloneMode === tab.id ? 'var(--primary)' : 'var(--text-muted)',
-                                                boxShadow: cloneMode === tab.id ? '0 1px 3px rgba(0,0,0,0.1)' : 'none'
-                                            }}
-                                        >{tab.label}</button>
+            {
+                showSettings && (
+                    <div className="modal-overlay" onClick={() => setShowSettings(false)}>
+                        <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 480 }}>
+                            <div className="modal-header">
+                                <h3 className="modal-title" style={{ display: 'flex', alignItems: 'center', gap: 6 }}><Settings size={16} /> Configurações</h3>
+                                <button className="modal-close" onClick={() => setShowSettings(false)}>×</button>
+                            </div>
+                            <div className="form-group">
+                                <label className="label">Nome do quiz</label>
+                                <input className="input" value={config.name || ''} placeholder="Ex: Quiz de Emagrecimento" onChange={e => updateConfig('name', e.target.value)} />
+                            </div>
+                            <div className="form-group">
+                                <label className="label">Nicho</label>
+                                <select className="input" value={config.niche || 'outro'} onChange={e => updateConfig('niche', e.target.value)}>
+                                    {['saude', 'fitness', 'beleza', 'educacao', 'financas', 'tech', 'alimentacao', 'marketing', 'outro'].map(n => (
+                                        <option key={n} value={n}>{n.charAt(0).toUpperCase() + n.slice(1)}</option>
                                     ))}
-                                </div>
+                                </select>
+                            </div>
+                            <div style={{ fontSize: '0.78rem', fontWeight: 600, marginBottom: 8, marginTop: 12 }}>Tela de Boas-vindas</div>
+                            <div className="form-group">
+                                <label className="label">Título</label>
+                                <input className="input" value={config.welcomeHeadline || ''} placeholder="Ex: Descubra seu tipo" onChange={e => updateConfig('welcomeHeadline', e.target.value)} />
+                            </div>
+                            <div className="form-group">
+                                <label className="label">Subtítulo</label>
+                                <input className="input" value={config.welcomeSub || ''} placeholder="Ex: Responda e descubra" onChange={e => updateConfig('welcomeSub', e.target.value)} />
+                            </div>
+                            <div className="form-group">
+                                <label className="label">Texto do botão</label>
+                                <input className="input" value={config.welcomeCta || 'Começar →'} placeholder="Começar →" onChange={e => updateConfig('welcomeCta', e.target.value)} />
+                            </div>
+                            <label className="toggle-wrapper" style={{ marginTop: 8 }}>
+                                <label className="toggle"><input type="checkbox" checked={config.collectLead !== false} onChange={e => updateConfig('collectLead', e.target.checked)} /><span className="toggle-slider" /></label>
+                                <span style={{ fontSize: '0.8rem' }}>Coletar leads (nome, email)</span>
+                            </label>
+                            <button className="btn btn-accent btn-full" style={{ marginTop: 16 }} onClick={() => { setShowSettings(false); showToastMsg('Configurações salvas!'); }}>Salvar configurações</button>
+                        </div>
+                    </div>
+                )
+            }
 
-                                {cloneMode !== 'json' ? (
-                                    <>
-                                        {/* Upload area */}
-                                        <div
-                                            style={{
-                                                border: '2px dashed var(--border)', borderRadius: 12, padding: cloneLog.length > 0 ? '12px' : '28px 20px',
-                                                textAlign: 'center', cursor: 'pointer', transition: 'all 0.2s', marginBottom: 14,
-                                                background: '#fafbfc', maxHeight: cloneLog.length > 0 ? 280 : 'none', overflowY: cloneLog.length > 0 ? 'auto' : 'visible',
-                                            }}
-                                            onDragOver={e => { e.preventDefault(); e.currentTarget.style.borderColor = 'var(--primary)'; e.currentTarget.style.background = 'var(--primary-bg)'; }}
-                                            onDragLeave={e => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.background = '#fafbfc'; }}
-                                            onDrop={e => {
-                                                e.preventDefault();
-                                                e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.background = '#fafbfc';
-                                                const newFiles = [...e.dataTransfer.files].filter(f => f.type.startsWith('image/'));
-                                                if (newFiles.length > 0) setCloneLog(prev => [...prev, ...newFiles.map(f => ({ file: f, preview: URL.createObjectURL(f), name: f.name }))]);
-                                            }}
-                                            onClick={() => {
-                                                const inp = document.createElement('input');
-                                                inp.type = 'file'; inp.accept = 'image/*'; inp.multiple = true;
-                                                inp.onchange = (ev) => {
-                                                    const newFiles = [...ev.target.files].filter(f => f.type.startsWith('image/'));
+            {
+                showCloneModal && (
+                    <div className="modal-overlay" onClick={() => !cloneLoading && setShowCloneModal(false)}>
+                        <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 580, maxHeight: '85vh', display: 'flex', flexDirection: 'column' }}>
+                            <div className="modal-header">
+                                <h3 className="modal-title">Clonar Quiz</h3>
+                                <button className="modal-close" onClick={() => !cloneLoading && setShowCloneModal(false)}>×</button>
+                            </div>
+
+                            {!cloneLoading ? (
+                                <div style={{ overflow: 'auto', flex: 1, padding: '0 0 16px' }}>
+                                    {/* Tab selector */}
+                                    <div style={{ display: 'flex', gap: 0, marginBottom: 16, background: '#f1f5f9', borderRadius: 10, padding: 3 }}>
+                                        {[{ id: 'screenshots', label: 'Screenshots' }, { id: 'json', label: 'Importar JSON' }].map(tab => (
+                                            <button key={tab.id} onClick={() => { setCloneError(null); setCloneMode(tab.id); }}
+                                                style={{
+                                                    flex: 1, padding: '8px 0', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: '0.78rem', fontWeight: 600,
+                                                    background: cloneMode === tab.id ? '#fff' : 'transparent',
+                                                    color: cloneMode === tab.id ? 'var(--primary)' : 'var(--text-muted)',
+                                                    boxShadow: cloneMode === tab.id ? '0 1px 3px rgba(0,0,0,0.1)' : 'none'
+                                                }}
+                                            >{tab.label}</button>
+                                        ))}
+                                    </div>
+
+                                    {cloneMode !== 'json' ? (
+                                        <>
+                                            {/* Upload area */}
+                                            <div
+                                                style={{
+                                                    border: '2px dashed var(--border)', borderRadius: 12, padding: cloneLog.length > 0 ? '12px' : '28px 20px',
+                                                    textAlign: 'center', cursor: 'pointer', transition: 'all 0.2s', marginBottom: 14,
+                                                    background: '#fafbfc', maxHeight: cloneLog.length > 0 ? 280 : 'none', overflowY: cloneLog.length > 0 ? 'auto' : 'visible',
+                                                }}
+                                                onDragOver={e => { e.preventDefault(); e.currentTarget.style.borderColor = 'var(--primary)'; e.currentTarget.style.background = 'var(--primary-bg)'; }}
+                                                onDragLeave={e => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.background = '#fafbfc'; }}
+                                                onDrop={e => {
+                                                    e.preventDefault();
+                                                    e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.background = '#fafbfc';
+                                                    const newFiles = [...e.dataTransfer.files].filter(f => f.type.startsWith('image/'));
                                                     if (newFiles.length > 0) setCloneLog(prev => [...prev, ...newFiles.map(f => ({ file: f, preview: URL.createObjectURL(f), name: f.name }))]);
-                                                };
-                                                inp.click();
-                                            }}
-                                        >
-                                            {cloneLog.length === 0 ? (
-                                                <>
-                                                    <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 8 }}><Upload size={36} color="var(--text-muted)" /></div>
-                                                    <div style={{ fontSize: '0.88rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: 4 }}>
-                                                        Arraste screenshots aqui
-                                                    </div>
-                                                    <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
-                                                        ou clique para selecionar imagens
-                                                    </div>
-                                                    <div style={{ fontSize: '0.68rem', color: '#94a3b8', marginTop: 8 }}>
-                                                        Tire um print de cada etapa do quiz que deseja clonar
-                                                    </div>
-                                                </>
-                                            ) : (
-                                                /* Thumbnail grid */
-                                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(70px, 1fr))', gap: 8 }} onClick={e => e.stopPropagation()}>
-                                                    {cloneLog.map((item, idx) => (
-                                                        <div key={idx} style={{ position: 'relative', borderRadius: 8, overflow: 'hidden', border: '1px solid #e2e8f0', aspectRatio: '9/16', background: '#f1f5f9' }}>
-                                                            <img src={item.preview} alt={`Screenshot ${idx + 1}`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                                                            <div style={{ position: 'absolute', top: 3, left: 3, background: 'var(--primary)', color: '#fff', borderRadius: '50%', width: 18, height: 18, fontSize: '0.6rem', fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{idx + 1}</div>
-                                                            <button onClick={(e) => { e.stopPropagation(); setCloneLog(prev => prev.filter((_, i) => i !== idx)); }}
-                                                                style={{ position: 'absolute', top: 3, right: 3, background: 'rgba(0,0,0,0.6)', color: '#fff', border: 'none', borderRadius: '50%', width: 18, height: 18, fontSize: '0.6rem', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1 }}>×</button>
+                                                }}
+                                                onClick={() => {
+                                                    const inp = document.createElement('input');
+                                                    inp.type = 'file'; inp.accept = 'image/*'; inp.multiple = true;
+                                                    inp.onchange = (ev) => {
+                                                        const newFiles = [...ev.target.files].filter(f => f.type.startsWith('image/'));
+                                                        if (newFiles.length > 0) setCloneLog(prev => [...prev, ...newFiles.map(f => ({ file: f, preview: URL.createObjectURL(f), name: f.name }))]);
+                                                    };
+                                                    inp.click();
+                                                }}
+                                            >
+                                                {cloneLog.length === 0 ? (
+                                                    <>
+                                                        <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 8 }}><Upload size={36} color="var(--text-muted)" /></div>
+                                                        <div style={{ fontSize: '0.88rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: 4 }}>
+                                                            Arraste screenshots aqui
                                                         </div>
-                                                    ))}
-                                                    {/* Add more button */}
-                                                    <div
-                                                        onClick={(e) => {
-                                                            e.stopPropagation();
-                                                            const inp = document.createElement('input');
-                                                            inp.type = 'file'; inp.accept = 'image/*'; inp.multiple = true;
-                                                            inp.onchange = (ev) => {
-                                                                const newFiles = [...ev.target.files].filter(f => f.type.startsWith('image/'));
-                                                                if (newFiles.length > 0) setCloneLog(prev => [...prev, ...newFiles.map(f => ({ file: f, preview: URL.createObjectURL(f), name: f.name }))]);
-                                                            };
-                                                            inp.click();
-                                                        }}
-                                                        style={{ borderRadius: 8, border: '2px dashed #cbd5e1', aspectRatio: '9/16', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', fontSize: '0.6rem', color: '#94a3b8', gap: 2 }}
-                                                    >
-                                                        <span style={{ fontSize: 18 }}>+</span>
-                                                        <span>Adicionar</span>
+                                                        <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+                                                            ou clique para selecionar imagens
+                                                        </div>
+                                                        <div style={{ fontSize: '0.68rem', color: '#94a3b8', marginTop: 8 }}>
+                                                            Tire um print de cada etapa do quiz que deseja clonar
+                                                        </div>
+                                                    </>
+                                                ) : (
+                                                    /* Thumbnail grid */
+                                                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(70px, 1fr))', gap: 8 }} onClick={e => e.stopPropagation()}>
+                                                        {cloneLog.map((item, idx) => (
+                                                            <div key={idx} style={{ position: 'relative', borderRadius: 8, overflow: 'hidden', border: '1px solid #e2e8f0', aspectRatio: '9/16', background: '#f1f5f9' }}>
+                                                                <img src={item.preview} alt={`Screenshot ${idx + 1}`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                                                <div style={{ position: 'absolute', top: 3, left: 3, background: 'var(--primary)', color: '#fff', borderRadius: '50%', width: 18, height: 18, fontSize: '0.6rem', fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{idx + 1}</div>
+                                                                <button onClick={(e) => { e.stopPropagation(); setCloneLog(prev => prev.filter((_, i) => i !== idx)); }}
+                                                                    style={{ position: 'absolute', top: 3, right: 3, background: 'rgba(0,0,0,0.6)', color: '#fff', border: 'none', borderRadius: '50%', width: 18, height: 18, fontSize: '0.6rem', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1 }}>×</button>
+                                                            </div>
+                                                        ))}
+                                                        {/* Add more button */}
+                                                        <div
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                const inp = document.createElement('input');
+                                                                inp.type = 'file'; inp.accept = 'image/*'; inp.multiple = true;
+                                                                inp.onchange = (ev) => {
+                                                                    const newFiles = [...ev.target.files].filter(f => f.type.startsWith('image/'));
+                                                                    if (newFiles.length > 0) setCloneLog(prev => [...prev, ...newFiles.map(f => ({ file: f, preview: URL.createObjectURL(f), name: f.name }))]);
+                                                                };
+                                                                inp.click();
+                                                            }}
+                                                            style={{ borderRadius: 8, border: '2px dashed #cbd5e1', aspectRatio: '9/16', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', fontSize: '0.6rem', color: '#94a3b8', gap: 2 }}
+                                                        >
+                                                            <span style={{ fontSize: 18 }}>+</span>
+                                                            <span>Adicionar</span>
+                                                        </div>
                                                     </div>
-                                                </div>
-                                            )}
-                                        </div>
-                                        <div style={{ padding: '8px 12px', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 8, marginBottom: 14, fontSize: '0.7rem', color: '#166534' }}>
-                                            <Lightbulb size={14} style={{ display: 'inline', marginRight: 4 }} /> <strong>Dica:</strong> Tire prints de cada etapa do quiz (perguntas, páginas de info, resultado). A IA vai analisar cada screenshot e recriar as etapas.
-                                        </div>
-                                    </>
-                                ) : (
-                                    <>
-                                        <div style={{ marginBottom: 10 }}>
-                                            <label className="label">Cole o JSON do quiz</label>
-                                            <textarea id="jsonImportArea" className="input"
-                                                placeholder={'{\n  "pages": [\n    { "type": "choice", "text": "Pergunta?", "options": [...] }\n  ]\n}'}
-                                                style={{ width: '100%', minHeight: 160, resize: 'vertical', fontFamily: 'monospace', fontSize: '0.72rem', lineHeight: 1.4 }} />
-                                        </div>
-                                        <div style={{ padding: '8px 12px', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 8, marginBottom: 14, fontSize: '0.7rem', color: '#166534' }}>
-                                            <Lightbulb size={14} style={{ display: 'inline', marginRight: 4 }} /> <strong>Dica:</strong> Exporte o JSON do dashboard do quiz e cole aqui. Aceita vários formatos.
-                                        </div>
-                                    </>
-                                )}
+                                                )}
+                                            </div>
+                                            <div style={{ padding: '8px 12px', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 8, marginBottom: 14, fontSize: '0.7rem', color: '#166534' }}>
+                                                <Lightbulb size={14} style={{ display: 'inline', marginRight: 4 }} /> <strong>Dica:</strong> Tire prints de cada etapa do quiz (perguntas, páginas de info, resultado). A IA vai analisar cada screenshot e recriar as etapas.
+                                            </div>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <div style={{ marginBottom: 10 }}>
+                                                <label className="label">Cole o JSON do quiz</label>
+                                                <textarea id="jsonImportArea" className="input"
+                                                    placeholder={'{\n  "pages": [\n    { "type": "choice", "text": "Pergunta?", "options": [...] }\n  ]\n}'}
+                                                    style={{ width: '100%', minHeight: 160, resize: 'vertical', fontFamily: 'monospace', fontSize: '0.72rem', lineHeight: 1.4 }} />
+                                            </div>
+                                            <div style={{ padding: '8px 12px', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 8, marginBottom: 14, fontSize: '0.7rem', color: '#166534' }}>
+                                                <Lightbulb size={14} style={{ display: 'inline', marginRight: 4 }} /> <strong>Dica:</strong> Exporte o JSON do dashboard do quiz e cole aqui. Aceita vários formatos.
+                                            </div>
+                                        </>
+                                    )}
 
-                                {cloneError && (
-                                    <div style={{ padding: '10px 14px', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 10, marginBottom: 14, fontSize: '0.78rem', color: '#dc2626' }}>{cloneError}</div>
-                                )}
+                                    {cloneError && (
+                                        <div style={{ padding: '10px 14px', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 10, marginBottom: 14, fontSize: '0.78rem', color: '#dc2626' }}>{cloneError}</div>
+                                    )}
 
-                                <div style={{ display: 'flex', gap: 8 }}>
-                                    <button className="btn btn-ghost" style={{ flex: 1 }} onClick={() => setShowCloneModal(false)}>Cancelar</button>
-                                    <button className="btn btn-accent" style={{ flex: 2 }}
-                                        disabled={cloneMode !== 'json' ? cloneLog.length === 0 : false}
-                                        onClick={async () => {
-                                            setCloneError(null);
-                                            if (cloneMode === 'json') {
-                                                const raw = document.getElementById('jsonImportArea')?.value?.trim();
-                                                if (!raw) { setCloneError('Cole o JSON primeiro.'); return; }
-                                                try {
-                                                    const data = JSON.parse(raw);
-                                                    let pages = [], quizName = data.name || data.quizName || data.title || 'Quiz Importado', results = data.results || [];
-                                                    if (data.pages && Array.isArray(data.pages)) pages = data.pages;
-                                                    else if (data.steps && Array.isArray(data.steps)) {
-                                                        const ns = data.steps.map((s, i) => ({ id: `stp_j_${Date.now()}_${i}`, name: s.name || `Etapa ${i + 1}`, blocks: s.blocks || [s] }));
+                                    <div style={{ display: 'flex', gap: 8 }}>
+                                        <button className="btn btn-ghost" style={{ flex: 1 }} onClick={() => setShowCloneModal(false)}>Cancelar</button>
+                                        <button className="btn btn-accent" style={{ flex: 2 }}
+                                            disabled={cloneMode !== 'json' ? cloneLog.length === 0 : false}
+                                            onClick={async () => {
+                                                setCloneError(null);
+                                                if (cloneMode === 'json') {
+                                                    const raw = document.getElementById('jsonImportArea')?.value?.trim();
+                                                    if (!raw) { setCloneError('Cole o JSON primeiro.'); return; }
+                                                    try {
+                                                        const data = JSON.parse(raw);
+                                                        let pages = [], quizName = data.name || data.quizName || data.title || 'Quiz Importado', results = data.results || [];
+                                                        if (data.pages && Array.isArray(data.pages)) pages = data.pages;
+                                                        else if (data.steps && Array.isArray(data.steps)) {
+                                                            const ns = data.steps.map((s, i) => ({ id: `stp_j_${Date.now()}_${i}`, name: s.name || `Etapa ${i + 1}`, blocks: s.blocks || [s] }));
+                                                            setSteps(ns); setActiveStepIdx(0); setSelectedBlockIdx(null);
+                                                            setConfig(c => ({ ...c, name: quizName }));
+                                                            if (results.length) setClonedResults(results);
+                                                            showToastMsg(`${ns.length} etapas importadas!`);
+                                                            setShowCloneModal(false); return;
+                                                        }
+                                                        else if (data.screens && Array.isArray(data.screens)) {
+                                                            pages = data.screens.map(s => {
+                                                                const comps = s.components || s.layers || [];
+                                                                const textC = comps.find(c => c.type === 'text' || c.type === 'title');
+                                                                const optC = comps.find(c => c.type === 'options' || c.type === 'buttons');
+                                                                return { type: optC ? 'choice' : 'insight', text: textC?.content || s.name || '', options: optC?.items?.map((o, j) => ({ text: o.text || '', weight: j + 1 })) || [] };
+                                                            });
+                                                        }
+                                                        else if (Array.isArray(data)) {
+                                                            pages = data.map(item => ({ type: item.type || 'choice', text: item.question || item.text || '', options: (item.options || item.answers || []).map((o, j) => ({ text: typeof o === 'string' ? o : (o.text || ''), weight: j + 1 })) }));
+                                                        }
+                                                        if (!pages.length) { setCloneError('Formato não reconhecido.'); return; }
+                                                        const ns = pages.map((p, i) => ({ id: `stp_j_${Date.now()}_${i}`, name: (p.text || '').slice(0, 25) || `Etapa ${i + 1}`, blocks: [p] }));
                                                         setSteps(ns); setActiveStepIdx(0); setSelectedBlockIdx(null);
-                                                        setConfig(c => ({ ...c, name: quizName }));
+                                                        setConfig(c => ({ ...c, name: quizName, primaryColor: data.primaryColor || c.primaryColor }));
                                                         if (results.length) setClonedResults(results);
                                                         showToastMsg(`${ns.length} etapas importadas!`);
-                                                        setShowCloneModal(false); return;
-                                                    }
-                                                    else if (data.screens && Array.isArray(data.screens)) {
-                                                        pages = data.screens.map(s => {
-                                                            const comps = s.components || s.layers || [];
-                                                            const textC = comps.find(c => c.type === 'text' || c.type === 'title');
-                                                            const optC = comps.find(c => c.type === 'options' || c.type === 'buttons');
-                                                            return { type: optC ? 'choice' : 'insight', text: textC?.content || s.name || '', options: optC?.items?.map((o, j) => ({ text: o.text || '', weight: j + 1 })) || [] };
-                                                        });
-                                                    }
-                                                    else if (Array.isArray(data)) {
-                                                        pages = data.map(item => ({ type: item.type || 'choice', text: item.question || item.text || '', options: (item.options || item.answers || []).map((o, j) => ({ text: typeof o === 'string' ? o : (o.text || ''), weight: j + 1 })) }));
-                                                    }
-                                                    if (!pages.length) { setCloneError('Formato não reconhecido.'); return; }
-                                                    const ns = pages.map((p, i) => ({ id: `stp_j_${Date.now()}_${i}`, name: (p.text || '').slice(0, 25) || `Etapa ${i + 1}`, blocks: [p] }));
-                                                    setSteps(ns); setActiveStepIdx(0); setSelectedBlockIdx(null);
-                                                    setConfig(c => ({ ...c, name: quizName, primaryColor: data.primaryColor || c.primaryColor }));
-                                                    if (results.length) setClonedResults(results);
-                                                    showToastMsg(`${ns.length} etapas importadas!`);
-                                                    setShowCloneModal(false);
-                                                } catch (e) { setCloneError('JSON inválido: ' + e.message); }
-                                                return;
-                                            }
+                                                        setShowCloneModal(false);
+                                                    } catch (e) { setCloneError('JSON inválido: ' + e.message); }
+                                                    return;
+                                                }
 
-                                            // Screenshot mode
-                                            if (cloneLog.length === 0) { setCloneError('Adicione pelo menos 1 screenshot.'); return; }
-                                            setCloneLoading(true);
-                                            setCloneProgress({ stage: 'uploading', msg: `Enviando ${cloneLog.length} screenshots...`, pct: 5 });
-                                            let success = false;
-                                            try {
-                                                const API_BASE = import.meta.env.DEV ? 'http://localhost:3001' : '';
-                                                const formData = new FormData();
-                                                for (const item of cloneLog) {
-                                                    formData.append('screenshots', item.file);
+                                                // Screenshot mode
+                                                if (cloneLog.length === 0) { setCloneError('Adicione pelo menos 1 screenshot.'); return; }
+                                                setCloneLoading(true);
+                                                setCloneProgress({ stage: 'uploading', msg: `Enviando ${cloneLog.length} screenshots...`, pct: 5 });
+                                                let success = false;
+                                                try {
+                                                    const API_BASE = import.meta.env.DEV ? 'http://localhost:3001' : '';
+                                                    const formData = new FormData();
+                                                    for (const item of cloneLog) {
+                                                        formData.append('screenshots', item.file);
+                                                    }
+                                                    const res = await fetch(`${API_BASE}/api/clone-screenshots`, {
+                                                        method: 'POST',
+                                                        body: formData,
+                                                    });
+                                                    if (!res.ok) {
+                                                        const errData = await res.json().catch(() => ({}));
+                                                        throw new Error(errData.error || `Erro ${res.status}`);
+                                                    }
+                                                    const result = await res.json();
+                                                    const pages = result.pages || [];
+                                                    if (pages.length > 0) {
+                                                        const ns = pages.map((p, i) => ({
+                                                            id: `stp_ss_${Date.now()}_${i}`,
+                                                            name: (p.text || '').replace(/\n/g, ' ').slice(0, 25) || `Etapa ${i + 1}`,
+                                                            blocks: [{
+                                                                type: p.type || 'choice',
+                                                                text: p.text || '',
+                                                                options: (p.options || []).map((o, j) => ({
+                                                                    text: o.text || '', emoji: o.emoji || '', weight: j + 1
+                                                                })),
+                                                            }]
+                                                        }));
+                                                        setSteps(ns); setActiveStepIdx(0); setSelectedBlockIdx(null);
+                                                        setConfig(c => ({ ...c, name: 'Quiz Clonado' }));
+                                                        showToastMsg(`${ns.length} etapas extraídas dos screenshots!`);
+                                                        success = true;
+                                                    } else {
+                                                        setCloneError('Nenhuma etapa extraída. Tente com screenshots mais claros.');
+                                                    }
+                                                } catch (err) {
+                                                    setCloneError(err.message || 'Erro ao processar screenshots.');
                                                 }
-                                                const res = await fetch(`${API_BASE}/api/clone-screenshots`, {
-                                                    method: 'POST',
-                                                    body: formData,
-                                                });
-                                                if (!res.ok) {
-                                                    const errData = await res.json().catch(() => ({}));
-                                                    throw new Error(errData.error || `Erro ${res.status}`);
-                                                }
-                                                const result = await res.json();
-                                                const pages = result.pages || [];
-                                                if (pages.length > 0) {
-                                                    const ns = pages.map((p, i) => ({
-                                                        id: `stp_ss_${Date.now()}_${i}`,
-                                                        name: (p.text || '').replace(/\n/g, ' ').slice(0, 25) || `Etapa ${i + 1}`,
-                                                        blocks: [{
-                                                            type: p.type || 'choice',
-                                                            text: p.text || '',
-                                                            options: (p.options || []).map((o, j) => ({
-                                                                text: o.text || '', emoji: o.emoji || '', weight: j + 1
-                                                            })),
-                                                        }]
-                                                    }));
-                                                    setSteps(ns); setActiveStepIdx(0); setSelectedBlockIdx(null);
-                                                    setConfig(c => ({ ...c, name: 'Quiz Clonado' }));
-                                                    showToastMsg(`${ns.length} etapas extraídas dos screenshots!`);
-                                                    success = true;
-                                                } else {
-                                                    setCloneError('Nenhuma etapa extraída. Tente com screenshots mais claros.');
-                                                }
-                                            } catch (err) {
-                                                setCloneError(err.message || 'Erro ao processar screenshots.');
-                                            }
-                                            setCloneLoading(false);
-                                            if (success) { setCloneLog([]); setShowCloneModal(false); }
-                                        }}
-                                    >
-                                        {cloneMode === 'json' ? 'Importar JSON' : `Analisar ${cloneLog.length} Screenshot${cloneLog.length !== 1 ? 's' : ''}`}
-                                    </button>
+                                                setCloneLoading(false);
+                                                if (success) { setCloneLog([]); setShowCloneModal(false); }
+                                            }}
+                                        >
+                                            {cloneMode === 'json' ? 'Importar JSON' : `Analisar ${cloneLog.length} Screenshot${cloneLog.length !== 1 ? 's' : ''}`}
+                                        </button>
+                                    </div>
                                 </div>
-                            </div>
-                        ) : (
-                            /* Loading state */
-                            <div style={{ padding: '30px 20px', textAlign: 'center' }}>
-                                <div style={{ position: 'relative', width: 70, height: 70, margin: '0 auto 16px' }}>
-                                    <div style={{ width: 70, height: 70, borderRadius: '50%', border: '4px solid #e2e8f0', borderTopColor: 'var(--primary)', animation: 'spin 1s linear infinite' }} />
-                                    <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 26 }}>🔍</div>
+                            ) : (
+                                /* Loading state */
+                                <div style={{ padding: '30px 20px', textAlign: 'center' }}>
+                                    <div style={{ position: 'relative', width: 70, height: 70, margin: '0 auto 16px' }}>
+                                        <div style={{ width: 70, height: 70, borderRadius: '50%', border: '4px solid #e2e8f0', borderTopColor: 'var(--primary)', animation: 'spin 1s linear infinite' }} />
+                                        <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 26 }}>🔍</div>
+                                    </div>
+                                    <div style={{ fontSize: '0.95rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: 6 }}>
+                                        {cloneProgress.msg || 'Analisando screenshots...'}
+                                    </div>
+                                    <div style={{ width: '80%', margin: '0 auto', height: 5, background: '#e2e8f0', borderRadius: 5, overflow: 'hidden' }}>
+                                        <div style={{ height: '100%', background: 'linear-gradient(90deg, var(--primary), #10b981)', borderRadius: 5, transition: 'width 0.5s ease', width: `${cloneProgress.pct || 10}%` }} />
+                                    </div>
+                                    <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: 10 }}>
+                                        A IA está analisando cada screenshot • ~5s por imagem
+                                    </div>
                                 </div>
-                                <div style={{ fontSize: '0.95rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: 6 }}>
-                                    {cloneProgress.msg || 'Analisando screenshots...'}
-                                </div>
-                                <div style={{ width: '80%', margin: '0 auto', height: 5, background: '#e2e8f0', borderRadius: 5, overflow: 'hidden' }}>
-                                    <div style={{ height: '100%', background: 'linear-gradient(90deg, var(--primary), #10b981)', borderRadius: 5, transition: 'width 0.5s ease', width: `${cloneProgress.pct || 10}%` }} />
-                                </div>
-                                <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: 10 }}>
-                                    A IA está analisando cada screenshot • ~5s por imagem
-                                </div>
-                            </div>
-                        )}
+                            )}
+                        </div>
                     </div>
-                </div>
-            )}
+                )
+            }
 
             {renderToast()}
-        </div>
+        </div >
     );
 }

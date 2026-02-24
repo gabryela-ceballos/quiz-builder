@@ -72,8 +72,15 @@ db.exec(`
   );
 `);
 
+// Add user_id column to quizzes if not present
+try {
+    db.exec(`ALTER TABLE quizzes ADD COLUMN user_id INTEGER`);
+} catch (e) { /* column already exists */ }
+
+
 // ── Server hostname (for CNAME instructions) ──
 const SERVER_HOSTNAME = process.env.SERVER_HOSTNAME || 'localhost:3001';
+const ADMIN_EMAIL = (process.env.ADMIN_EMAIL || 'admin@test.com').toLowerCase().trim();
 
 // ── Middleware ──
 app.use(cors());
@@ -115,9 +122,9 @@ app.post('/api/auth/register', (req, res) => {
     if (existing) return res.status(409).json({ error: 'Email já cadastrado' });
 
     const hash = bcrypt.hashSync(password, 10);
-    // First user becomes admin
+    // Admin if email matches ADMIN_EMAIL or first user
     const userCount = db.prepare('SELECT COUNT(*) as c FROM users').get().c;
-    const role = userCount === 0 ? 'admin' : 'user';
+    const role = (email.toLowerCase().trim() === ADMIN_EMAIL || userCount === 0) ? 'admin' : 'user';
 
     const result = db.prepare('INSERT INTO users (name, email, password_hash, role) VALUES (?, ?, ?, ?)').run(name.trim(), email.toLowerCase().trim(), hash, role);
     const token = makeToken(result.lastInsertRowid);
@@ -224,8 +231,15 @@ app.post('/api/upload', upload.single('image'), (req, res) => {
 // ── Quizzes CRUD ──
 
 // GET all quizzes
-app.get('/api/quizzes', (req, res) => {
-    const rows = db.prepare('SELECT id, data, created_at, updated_at FROM quizzes ORDER BY updated_at DESC').all();
+app.get('/api/quizzes', requireAuth, (req, res) => {
+    let rows;
+    if (req.user.role === 'admin') {
+        // Admin sees all quizzes
+        rows = db.prepare('SELECT id, data, user_id, created_at, updated_at FROM quizzes ORDER BY updated_at DESC').all();
+    } else {
+        // Regular user sees only their own quizzes
+        rows = db.prepare('SELECT id, data, user_id, created_at, updated_at FROM quizzes WHERE user_id = ? ORDER BY updated_at DESC').all(req.user.id);
+    }
     const quizzes = rows.map(r => ({ ...JSON.parse(r.data), id: r.id }));
     res.json(quizzes);
 });
@@ -238,23 +252,31 @@ app.get('/api/quizzes/:id', (req, res) => {
 });
 
 // POST create/update quiz
-app.post('/api/quizzes', (req, res) => {
+app.post('/api/quizzes', requireAuth, (req, res) => {
     const quiz = req.body;
     const id = quiz.id || Math.random().toString(36).slice(2, 10);
     const now = Date.now();
     const data = JSON.stringify({ ...quiz, id, updatedAt: now });
 
-    const existing = db.prepare('SELECT id FROM quizzes WHERE id = ?').get(id);
+    const existing = db.prepare('SELECT id, user_id FROM quizzes WHERE id = ?').get(id);
     if (existing) {
+        // Only owner or admin can update
+        if (existing.user_id && existing.user_id !== req.user.id && req.user.role !== 'admin') {
+            return res.status(403).json({ error: 'Acesso negado' });
+        }
         db.prepare('UPDATE quizzes SET data = ?, updated_at = ? WHERE id = ?').run(data, now, id);
     } else {
-        db.prepare('INSERT INTO quizzes (id, data, created_at, updated_at) VALUES (?, ?, ?, ?)').run(id, data, now, now);
+        db.prepare('INSERT INTO quizzes (id, data, created_at, updated_at, user_id) VALUES (?, ?, ?, ?, ?)').run(id, data, now, now, req.user.id);
     }
     res.json({ ...quiz, id, updatedAt: now });
 });
 
 // DELETE single quiz
-app.delete('/api/quizzes/:id', (req, res) => {
+app.delete('/api/quizzes/:id', requireAuth, (req, res) => {
+    const quiz = db.prepare('SELECT user_id FROM quizzes WHERE id = ?').get(req.params.id);
+    if (quiz && quiz.user_id && quiz.user_id !== req.user.id && req.user.role !== 'admin') {
+        return res.status(403).json({ error: 'Acesso negado' });
+    }
     db.prepare('DELETE FROM quizzes WHERE id = ?').run(req.params.id);
     res.json({ ok: true });
 });
@@ -381,11 +403,12 @@ app.get('/api/analytics/:quizId', (req, res) => {
     const rows = db.prepare('SELECT event, data, created_at FROM analytics WHERE quiz_id = ? ORDER BY created_at DESC').all(req.params.quizId);
     const events = rows.map(r => ({ event: r.event, ...JSON.parse(r.data || '{}'), date: new Date(r.created_at).toISOString() }));
 
+    const views = events.filter(e => e.event === 'view').length;
     const starts = events.filter(e => e.event === 'start').length;
     const completes = events.filter(e => e.event === 'complete').length;
     const answers = events.filter(e => e.event === 'answer');
 
-    res.json({ starts, completes, conversionRate: starts ? Math.round(completes / starts * 100) : 0, events, answers });
+    res.json({ views, starts, completes, conversionRate: starts ? Math.round(completes / starts * 100) : 0, events, answers });
 });
 
 // ── Shares / Collaboration ──
@@ -623,7 +646,7 @@ Regras:
 });
 
 app.post('/api/generate-quiz', async (req, res) => {
-    const { productName, productDescription, niche, questionCount = 10, useConditionals = false } = req.body;
+    const { productName, productDescription, niche, questionCount = 10, useConditionals = false, customInstructions = '', companyName = '' } = req.body;
     if (!productName) return res.status(400).json({ error: 'Nome do produto obrigatório' });
     if (!OPENAI_KEY) return res.status(400).json({ error: 'VITE_OPENAI_API_KEY não configurada no .env' });
 
@@ -647,76 +670,124 @@ Tudo em português brasileiro.`, { temperature: 0.5, maxTokens: 500 });
         console.log('[AI] Step 1/3 ✅ metadata');
 
         // STEP 2: Generate all quiz content in one call
-        const quizContent = await callOpenAI(`Crie um quiz completo com ${questionCount} perguntas para o produto "${productName}".
+        const quizContent = await callOpenAI(`Você vai montar um quiz de funil de vendas para o produto "${productName}".
+
+═══════════════════════════════════
+CONTEXTO FUNDAMENTAL — LEIA ANTES DE TUDO
+═══════════════════════════════════
+
+Este quiz NÃO é uma landing page de vendas. O usuário NÃO sabe que vai receber uma oferta.
+Ele clicou em um anúncio curioso (ex: "Descubra seu perfil de...", "Teste seu nível de...") e está fazendo um quiz por curiosidade.
+
+A ESTRATÉGIA é:
+1. Fazer perguntas que despertem problemas, dores e desejos relacionados ao nicho
+2. Usar insights e provas sociais para educar e gerar consciência do problema
+3. Criar urgência e desejo ao longo da jornada
+4. No FINAL, o resultado revela "a solução" — que é o produto "${productName}"
+5. O usuário chega ao resultado QUERENDO a solução, sem ter percebido que era um funil de vendas
+
+Portanto: as perguntas devem ser sobre O PROBLEMA/DESEJO do usuário, NUNCA sobre o produto diretamente.
+Não mencione o nome do produto nas perguntas. O produto só aparece nos "results" como solução.
 
 Nicho: ${metadata.niche || niche}
 Sub-tema: ${metadata.subTheme || productName}
 Tom: ${metadata.tone || 'empático'}
+Total de páginas: ${questionCount}
+${customInstructions ? `\nINSTRUÇÕES ESPECIAIS DO USUÁRIO (siga fielmente como prioridade):\n${customInstructions}\n` : ''}
 
-Retorne JSON com esta estrutura EXATA:
+═══════════════════════════════════
+CATÁLOGO DE COMPONENTES DISPONÍVEIS
+═══════════════════════════════════
+
+📋 PERGUNTAS (coletam respostas do usuário):
+• "choice" — Pergunta de múltipla escolha com 3-5 opções. Cada opção tem emoji e peso. Ideal para segmentar o perfil do usuário. Use layouts variados.
+  JSON: {"type": "choice", "text": "Pergunta?", "options": [{"text": "Opção", "emoji": "😊", "weight": 1}]}
+• "likert" — Escala de frequência 1-5 (Nunca → Sempre). Ideal para medir hábitos e comportamentos recorrentes.
+  JSON: {"type": "likert", "text": "Com que frequência...?", "options": [{"text": "Nunca", "value": 1, "weight": 1}, {"text": "Raramente", "value": 2, "weight": 2}, {"text": "Às vezes", "value": 3, "weight": 3}, {"text": "Frequentemente", "value": 4, "weight": 4}, {"text": "Sempre", "value": 5, "weight": 5}]}
+• "yes-no" — Pergunta simples de Sim ou Não. Ideal para validar um problema ou situação binária.
+  JSON: {"type": "yes-no", "text": "Você já tentou...?"}
+• "statement" — Afirmação para concordar/discordar. Inclui uma citação reflexiva/motivacional. Ideal para engajar emocionalmente.
+  JSON: {"type": "statement", "text": "Você concorda?", "quote": "Frase motivacional", "options": ["Discordo vivamente", "Discordo parcialmente", "Concordo parcialmente", "Concordo vivamente"]}
+
+📌 CONTEÚDO PERSUASIVO (não coletam dados, reforçam engajamento):
+• "insight" — Dica educativa com dado estatístico real e relevante. Funciona como uma "pausa inteligente" que educa o usuário. Máximo 2-3 no quiz inteiro.
+  JSON: {"type": "insight", "title": "Título do insight", "body": "Texto educativo com dado concreto."}
+• "social-proof" — Prova social com número impactante (ex: "92% das pessoas"). Gera confiança e valida a jornada. Ideal no meio do quiz. Máximo 1-2 no quiz.
+  JSON: {"type": "social-proof", "headline": "92% das pessoas", "subheadline": "relataram melhora significativa"}
+• "testimonial" — Depoimento fictício mas realista de cliente satisfeito. Gera identificação. Máximo 1 no quiz.
+  JSON: {"type": "testimonial", "name": "Maria S.", "text": "Esse programa mudou minha perspectiva totalmente!", "rating": 5}
+• "before-after" — Comparação visual de antes vs depois. Ideal para mostrar transformação. Máximo 1 no quiz.
+  JSON: {"type": "before-after", "title": "Transformação real", "beforeLabel": "Antes", "afterLabel": "Depois", "beforeImage": "", "afterImage": ""}
+
+⏳ TRANSIÇÃO (só no FINAL do quiz, ANTES do resultado):
+• "loading" — Tela de carregamento que simula análise das respostas. Cria expectativa. USAR APENAS 1x como PENÚLTIMA ou ANTEPENÚLTIMA página.
+  JSON: {"type": "loading", "title": "Analisando suas respostas...", "items": ["Calculando seu perfil...", "Gerando recomendações...", "Preparando diagnóstico..."]}
+
+═══════════════════════════════════
+REGRAS OBRIGATÓRIAS DE ORDENAÇÃO
+═══════════════════════════════════
+
+A ordem DEVE fazer sentido como uma JORNADA DO USUÁRIO:
+
+FASE 1 — ABERTURA (páginas 1-3): Perguntas simples e leves para o usuário entrar no quiz. Só use "choice" ou "yes-no" aqui.
+
+FASE 2 — APROFUNDAMENTO (páginas 4 até 60%): Perguntas mais específicas (choice, likert, statement). Intercale 1 insight ou social-proof entre as perguntas de forma IRREGULAR.
+
+FASE 3 — PERSUASÃO (60% até 80%): Aqui o usuário pode desistir. Coloque testimonial, before-after, ou social-proof para mantê-lo engajado. Misture com 1-2 perguntas.
+
+FASE 4 — FECHAMENTO (últimas 2-3 páginas): Últimas perguntas decisivas + loading (análise). O loading SEMPRE vem AQUI, nunca antes.
+
+⛔ PROIBIÇÕES ABSOLUTAS:
+1. NUNCA coloque "loading" no início ou meio do quiz — SOMENTE nas últimas 2-3 páginas
+2. NUNCA coloque perguntas (choice/likert/yes-no) DEPOIS do loading — o loading marca o fim
+3. NUNCA use mais de 3 vezes o mesmo tipo de componente (ex: máximo 3 insights, máximo 3 choices seguidos)
+4. NUNCA deixe mais de 2 componentes do mesmo tipo EM SEQUÊNCIA (ex: choice, choice é ok; choice, choice, choice é proibido)
+5. NUNCA comece o quiz com insight, testimonial, ou social-proof — comece SEMPRE com uma pergunta
+6. NUNCA coloque before-after ou testimonial nos primeiros 40% do quiz
+
+═══════════════════════════════════
+
+Retorne JSON com esta estrutura:
 {
-  "welcome": {
-    "headline": "Título chamativo do quiz",
-    "subheadline": "Subtítulo explicativo",
-    "cta": "Texto do botão →"
-  },
-  "pages": [
-    {"type": "choice", "text": "Pergunta?", "options": [{"text": "Opção 1", "emoji": "😊", "weight": 1}, {"text": "Opção 2", "emoji": "💪", "weight": 2}]},
-    {"type": "likert", "text": "Com que frequência...?", "options": [{"text": "Nunca", "value": 1, "weight": 1}, {"text": "Raramente", "value": 2, "weight": 2}, {"text": "Às vezes", "value": 3, "weight": 3}, {"text": "Frequentemente", "value": 4, "weight": 4}, {"text": "Sempre", "value": 5, "weight": 5}]},
-    {"type": "statement", "text": "Afirmação reflexiva", "quote": "Frase motivacional", "options": ["Discordo vivamente", "Discordo parcialmente", "Concordo parcialmente", "Concordo vivamente"]},
-    {"type": "insight", "title": "Você sabia?", "body": "Texto educativo com dado estatístico relevante."},
-    {"type": "social-proof", "headline": "87% das pessoas", "subheadline": "descobriram que tinham esse problema"}
-  ],
+  "welcome": {"headline": "Título chamativo sobre o PROBLEMA (não sobre o produto)", "subheadline": "Subtítulo que gere curiosidade", "cta": "Texto do botão →"},
+  "pages": [... array com ${questionCount} objetos usando os tipos acima ...],
   "results": [
-    {"id": "baixo", "name": "Perfil Iniciante", "minPct": 0, "maxPct": 40, "description": "Descrição detalhada do perfil...", "cta": "Comece sua jornada →", "ctaUrl": ""},
-    {"id": "medio", "name": "Perfil Intermediário", "minPct": 41, "maxPct": 70, "description": "Descrição detalhada...", "cta": "Eleve seu nível →", "ctaUrl": ""},
-    {"id": "alto", "name": "Perfil Avançado", "minPct": 71, "maxPct": 100, "description": "Descrição detalhada...", "cta": "Alcance a excelência →", "ctaUrl": ""}
+    {"id": "baixo", "name": "Perfil Nome", "minPct": 0, "maxPct": 40, "description": "Diagnóstico do perfil + como o produto ${productName} é a solução ideal para esse caso", "cta": "Quero minha solução →", "ctaUrl": ""},
+    {"id": "medio", "name": "Perfil Nome", "minPct": 41, "maxPct": 70, "description": "Diagnóstico + como ${productName} resolve os pontos identificados", "cta": "Garantir meu acesso →", "ctaUrl": ""},
+    {"id": "alto", "name": "Perfil Nome", "minPct": 71, "maxPct": 100, "description": "Diagnóstico + como ${productName} potencializa os resultados", "cta": "Começar agora →", "ctaUrl": ""}
   ]
 }
 
-REGRAS:
-- Gere exatamente ${questionCount} pages (perguntas + insights intercalados)
-- ~50% choice, ~20% likert, ~15% statement, ~15% insight/social-proof  
-- Distribua os tipos: NÃO coloque todos do mesmo tipo seguidos
-- Cada choice deve ter 3-5 opções com emoji e weight
-- Cada likert deve ter 5 opções com value 1-5
-- Adicione 1-2 insights entre as perguntas (dados e curiosidades sobre o tema)
-- Adicione 1 social-proof no meio do quiz
-- 3 resultados que cubram 0-100% sem gaps
-- Perguntas específicas ao sub-tema "${metadata.subTheme || productName}", nunca genéricas
-- Tudo em português brasileiro
-- Retorne SOMENTE o JSON
+LEMBRETES FINAIS:
+- Perguntas sobre o PROBLEMA/DESEJO do usuário, NUNCA sobre o produto
+- O produto "${productName}" só aparece nos "results" como solução revelada
+- O welcome NÃO menciona o produto — deve parecer um quiz educativo/diagnóstico
+- Tudo em português BR. Retorne SOMENTE o JSON.
 ${useConditionals ? `
-FLUXO CONDICIONAL — OBRIGATÓRIO, SIGA ESTE EXEMPLO EXATO:
-
+FLUXO CONDICIONAL — OBRIGATÓRIO:
 A segunda ou terceira página DEVE ser uma pergunta de ramificação. Depois dela, crie páginas específicas para cada ramo.
-Cada página de ramo DEVE ter "stepGoToName" apontando para a página de convergência (onde os ramos se encontram).
+Cada página de ramo DEVE ter "stepGoToName" apontando para a página de convergência.
 
-EXEMPLO CONCRETO (siga este padrão):
+EXEMPLO:
 "pages": [
-  {"type": "choice", "text": "Qual seu principal objetivo?", "options": [
-    {"text": "Emagrecer", "emoji": "🏃", "weight": 1},
-    {"text": "Ganhar massa", "emoji": "💪", "weight": 2}
-  ]},
+  {"type": "choice", "text": "Qual seu objetivo?", "options": [{"text": "Emagrecer", "emoji": "🏃", "weight": 1}, {"text": "Ganhar massa", "emoji": "💪", "weight": 2}]},
   {"type": "choice", "text": "Qual seu sexo biológico?", "options": [
     {"text": "Masculino", "emoji": "👨", "weight": 1, "goToStepName": "Rotina Masculina"},
     {"text": "Feminino", "emoji": "👩", "weight": 1, "goToStepName": "Rotina Feminina"}
   ]},
-  {"type": "insight", "title": "Rotina Masculina", "body": "Dica específica para homens...", "stepGoToName": "Sua Alimentação"},
-  {"type": "insight", "title": "Rotina Feminina", "body": "Dica específica para mulheres...", "stepGoToName": "Sua Alimentação"},
-  {"type": "choice", "text": "Sua Alimentação", "options": [...]},
-  ... resto do quiz normal ...
+  {"type": "insight", "title": "Rotina Masculina", "body": "Dica para homens...", "stepGoToName": "Alimentação"},
+  {"type": "insight", "title": "Rotina Feminina", "body": "Dica para mulheres...", "stepGoToName": "Alimentação"},
+  {"type": "choice", "text": "Alimentação", "options": [...]},
+  ... restante segue as regras normais de ordenação ...
 ]
-
-REGRAS CONDICIONAIS:
-- O "title"/"text" da página é o nome que "goToStepName" e "stepGoToName" referenciam — devem ser IDÊNTICOS
-- goToStepName vai DENTRO de cada opção da pergunta de ramificação
-- stepGoToName vai na RAIZ da página de ramo (mesmo nível que "type")
-- Crie 2-3 páginas por ramo antes de convergir
-- O fluxo SEMPRE deve convergir (voltar a um ponto comum via stepGoToName)
-- Use ramificações relevantes ao produto: gênero, nível, objetivo, faixa etária` : ''}`, {
-            system: 'Você é um especialista em quiz funnels de alta conversão. Crie quizzes envolventes e personalizados.',
-            temperature: 0.75,
+REGRAS: goToStepName dentro de cada opção, stepGoToName na raiz do ramo. title/text = nomes referenciados. Fluxo SEMPRE converge.` : ''}`, {
+            system: `Você é um especialista em quiz funnels de alta conversão com anos de experiência.
+Você DEVE criar quizzes que sigam uma jornada lógica e narrativa:
+1. ABERTURA: perguntas fáceis → APROFUNDAMENTO: perguntas específicas + conteúdo → PERSUASÃO: provas sociais → FECHAMENTO: loading + resultado.
+2. NUNCA coloque loading no início ou meio. NUNCA coloque perguntas depois do loading.
+3. MESCLE diferentes tipos de componentes de forma natural. Máximo 3 do mesmo tipo no quiz inteiro.
+4. Cada quiz deve parecer uma conversa fluida, não uma lista repetitiva de perguntas.`,
+            temperature: 0.8,
             maxTokens: 5000
         });
         console.log('[AI] Step 2/3 ✅ quiz content');
@@ -740,6 +811,38 @@ REGRAS CONDICIONAIS:
                 }],
             });
         }
+
+        // Add demographic steps (sex + age) right after welcome
+        steps.push({
+            id: `stp_sex_${Date.now()}`,
+            name: 'Qual é o seu sexo?',
+            blocks: [{
+                type: 'choice',
+                text: 'Qual é o seu sexo?',
+                options: [
+                    { text: 'Feminino', emoji: '👩', weight: 1 },
+                    { text: 'Masculino', emoji: '👨', weight: 1 },
+                    { text: 'Prefiro não dizer', emoji: '🤝', weight: 1 },
+                ],
+                optionLayout: 'list',
+            }],
+        });
+        steps.push({
+            id: `stp_age_${Date.now() + 1}`,
+            name: 'Qual é a sua faixa de idade?',
+            blocks: [{
+                type: 'choice',
+                text: 'Qual é a sua faixa de idade?',
+                options: [
+                    { text: '18-24 anos', emoji: '🧑', weight: 1 },
+                    { text: '25-34 anos', emoji: '💼', weight: 2 },
+                    { text: '35-44 anos', emoji: '🏠', weight: 3 },
+                    { text: '45-54 anos', emoji: '✨', weight: 4 },
+                    { text: '55+ anos', emoji: '🌟', weight: 5 },
+                ],
+                optionLayout: 'list',
+            }],
+        });
 
         // Page steps
         if (quizContent.pages?.length) {
@@ -765,6 +868,35 @@ REGRAS CONDICIONAIS:
                 steps.push(stepObj);
             });
         }
+
+        // Always add email capture step BEFORE results
+        steps.push({
+            id: `stp_capture_${Date.now()}`,
+            name: 'Captura de E-mail',
+            blocks: [{
+                type: 'capture',
+                title: 'Quase lá!',
+                subtitle: 'Preencha para ver seu resultado personalizado',
+                fields: ['name', 'email'],
+                buttonText: 'Ver meu resultado →',
+                required: true,
+            }],
+        });
+
+        // Add result step at the very end
+        const resultData = quizContent.results || [];
+        steps.push({
+            id: `stp_result_${Date.now()}`,
+            name: 'Resultado',
+            blocks: [{
+                type: 'result',
+                productName: productName,
+                salesUrl: '',
+                cta: resultData[0]?.cta || '🔥 Quero minha solução →',
+                productContext: productDescription || '',
+                title: 'Seu Diagnóstico Personalizado',
+            }],
+        });
 
         // Resolve conditional routing references (goToStepName → goToStep ID)
         if (useConditionals) {
@@ -808,6 +940,7 @@ REGRAS CONDICIONAIS:
         const result = {
             id: quizId,
             name: `Quiz: ${productName}`,
+            companyName: companyName || productName,
             emoji: '📊',
             primaryColor: metadata.palette?.[0] || '#2563eb',
             niche: niche,
@@ -1884,11 +2017,11 @@ const distPath = path.join(__dirname, 'dist');
 if (fs.existsSync(distPath)) {
     app.use(express.static(distPath));
     // SPA fallback — all non-API routes serve index.html
-   app.get(/.*/, (req, res) => {
-  if (!req.path.startsWith('/api/') && !req.path.startsWith('/uploads/')) {
-    res.sendFile(path.join(distPath, 'index.html'));
-  }
-});
+    app.get(/.*/, (req, res) => {
+        if (!req.path.startsWith('/api/') && !req.path.startsWith('/uploads/')) {
+            res.sendFile(path.join(distPath, 'index.html'));
+        }
+    });
     console.log('📦 Serving frontend from dist/');
 }
 

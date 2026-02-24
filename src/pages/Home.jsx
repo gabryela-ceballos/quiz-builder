@@ -171,8 +171,7 @@ export default function Home() {
                 {homeTab === 'mine' && (filteredQuizzes.length > 0 || search) && (
                     <div className="funnel-grid animate-in" style={{ padding: 0 }}>
                         {filteredQuizzes.map(quiz => {
-                            const isPageBuilder = quiz.steps?.length > 0 || quiz.emoji === '🧱';
-                            const editPath = isPageBuilder ? `/builder/page/${quiz.id}` : `/builder/${quiz.id}`;
+                            const editPath = `/builder/page/${quiz.id}`;
                             return (
                                 <div key={quiz.id} className="funnel-card" onClick={() => navigate(editPath)}>
                                     <div className="funnel-card-name">{quiz.name || 'Sem título'}</div>
@@ -245,7 +244,7 @@ export default function Home() {
                         ) : (
                             <div className="funnel-grid" style={{ padding: 0 }}>
                                 {sharedQuizzes.map(quiz => {
-                                    const editPath = quiz.steps?.length > 0 ? `/builder/page/${quiz.id}` : `/builder/${quiz.id}`;
+                                    const editPath = `/builder/page/${quiz.id}`;
                                     return (
                                         <div key={quiz.id} className="funnel-card" onClick={() => navigate(editPath)}>
                                             <div className="funnel-card-name">{quiz.name || 'Sem título'}</div>
@@ -275,7 +274,7 @@ export default function Home() {
                             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 12 }}>
                                 {allDomains.map(d => {
                                     const quiz = quizzes.find(q => q.id === d.quiz_id);
-                                    const editPath = quiz?.steps?.length > 0 ? `/builder/page/${d.quiz_id}?tab=dominio` : `/builder/${d.quiz_id}?tab=dominio`;
+                                    const editPath = `/builder/page/${d.quiz_id}?tab=dominio`;
                                     return (
                                         <div key={d.id} className="card" style={{ padding: '14px 18px', cursor: 'pointer', transition: 'var(--transition)', border: '1px solid var(--border)' }}
                                             onClick={() => navigate(editPath)}

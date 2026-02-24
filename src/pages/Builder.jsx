@@ -23,9 +23,11 @@ export default function Builder() {
 
   // Step 0 state
   const [product, setProduct] = useState({ name: '', description: '' });
+  const [companyName, setCompanyName] = useState('');
   const [niche, setNiche] = useState('');
   const [questionCount, setQCount] = useState(15);
   const [useConditionals, setUseConditionals] = useState(false);
+  const [customInstructions, setCustomInstructions] = useState('');
 
   // Clone state
   const [cloneUrl, setCloneUrl] = useState('');
@@ -93,9 +95,11 @@ export default function Builder() {
         body: JSON.stringify({
           productName: product.name,
           productDescription: product.description,
+          companyName: companyName.trim() || product.name,
           niche,
           questionCount,
           useConditionals,
+          customInstructions,
         }),
       });
 
@@ -248,6 +252,10 @@ export default function Builder() {
                 {/* Product info */}
                 <div className="card" style={{ padding: 28, marginBottom: 20 }}>
                   <div className="form-group">
+                    <label className="label">Nome da empresa / marca *</label>
+                    <input className="input" style={{ fontSize: '1rem' }} placeholder="Ex: FitLife, Escola Digital, BelezaPura..." value={companyName} onChange={e => setCompanyName(e.target.value)} />
+                  </div>
+                  <div className="form-group">
                     <label className="label">Nome do produto / serviço *</label>
                     <input className="input" style={{ fontSize: '1rem' }} placeholder="Ex: Yoga em Casa, Mentoria de Vendas, Ebook de Finanças..." value={product.name} onChange={e => setProduct(p => ({ ...p, name: e.target.value }))} />
                   </div>
@@ -291,6 +299,18 @@ export default function Builder() {
                     ))}
                   </div>
                   <p style={{ marginTop: 10, fontSize: '0.8rem', color: 'var(--text-muted)' }}>⚡ Páginas de dica são inseridas automaticamente entre seções</p>
+                </div>
+
+                {/* Custom instructions (optional) */}
+                <div className="card" style={{ padding: 24, marginBottom: 28 }}>
+                  <label className="label" style={{ marginBottom: 8 }}>Instruções personalizadas <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>(opcional)</span></label>
+                  <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: 12 }}>Descreva blocos ou seções específicas que você quer no quiz. Ex: "quero um bloco antes e depois", "adicione depoimentos", "inclua uma seção de preços".</p>
+                  <textarea
+                    value={customInstructions}
+                    onChange={e => setCustomInstructions(e.target.value)}
+                    placeholder="Ex: Quero uma seção de antes e depois com fotos, depoimentos no meio do quiz, e uma oferta com desconto no final..."
+                    style={{ width: '100%', minHeight: 80, padding: '10px 14px', borderRadius: 10, border: '1px solid var(--border)', fontSize: '0.85rem', resize: 'vertical', boxSizing: 'border-box', outline: 'none', fontFamily: 'inherit' }}
+                  />
                 </div>
 
                 {/* Conditional routing toggle */}

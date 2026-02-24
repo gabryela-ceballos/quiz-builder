@@ -639,6 +639,14 @@ function BlockRenderer({ block, pc }) {
 
         case 'spacer': return (<div style={{ height: block.height || 40 }} />);
 
+        case 'logo': return (<div style={{ display: 'flex', justifyContent: 'center', padding: block.position === 'bottom' ? '16px 0 8px' : '8px 0 16px', order: block.position === 'bottom' ? 999 : -999 }}>
+            {block.imageUrl ? (
+                <img src={block.imageUrl.startsWith('/') ? `${import.meta.env.DEV ? 'http://localhost:3001' : ''}${block.imageUrl}` : block.imageUrl} alt={block.alt || 'Logo'} style={{ maxWidth: block.maxWidth || 120, height: 'auto', objectFit: 'contain' }} />
+            ) : (
+                <div style={{ width: block.maxWidth || 120, height: 40, border: '2px dashed #d1d5db', borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, color: '#9ca3af' }}>Logo aqui</div>
+            )}
+        </div>);
+
         case 'html-script': return (<div style={{ padding: '12px 14px', background: '#1e1e2e', borderRadius: 12, fontFamily: 'monospace', fontSize: 12, color: '#a6e3a1', lineHeight: 1.6, overflow: 'hidden', maxHeight: 100 }}>
             {block.code ? <pre style={{ margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{block.code.slice(0, 200)}</pre> : <span style={{ color: '#6c7086' }}>{'<html/> código personalizado'}</span>}
         </div>);
