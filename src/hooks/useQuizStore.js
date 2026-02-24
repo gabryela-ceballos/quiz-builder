@@ -10,6 +10,12 @@ function authHeaders() {
 export async function getQuizzes() {
     try {
         const res = await fetch(`${API}/quizzes`, { headers: authHeaders() });
+        if (res.status === 401) {
+            localStorage.removeItem('inlead_token');
+            localStorage.removeItem('inlead_user');
+            window.location.href = '/login';
+            return [];
+        }
         return await res.json();
     } catch (_) { return []; }
 }
