@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Sparkles, Loader2, Check, Copy, Eye, Search, Zap, Link, PenTool } from 'lucide-react';
+import DomainSettings from '../components/DomainSettings';
 import { generateQuiz, NICHES } from '../utils/quizGenerator';
 import { saveQuiz, getQuiz } from '../hooks/useQuizStore';
 import { cloneFromUrl } from '../utils/cloneService';
@@ -9,8 +10,10 @@ const STEPS = ['Produto', 'Configurar', 'Publicar'];
 
 export default function Builder() {
   const navigate = useNavigate();
-  const [step, setStep] = useState(-1); // -1 = mode selector
-  const [creationMode, setCreationMode] = useState(''); // 'ai' | 'clone' | 'builder'
+  // Auto-detect mode from URL params
+  const urlMode = new URLSearchParams(window.location.search).get('mode');
+  const [step, setStep] = useState(urlMode === 'ai' ? 0 : -1);
+  const [creationMode, setCreationMode] = useState(urlMode === 'ai' ? 'ai' : '');
   const [generating, setGenerating] = useState(false);
   const [genPhase, setGenPhase] = useState('');
   const [genError, setGenError] = useState('');
@@ -22,6 +25,7 @@ export default function Builder() {
   const [product, setProduct] = useState({ name: '', description: '' });
   const [niche, setNiche] = useState('');
   const [questionCount, setQCount] = useState(15);
+  const [useConditionals, setUseConditionals] = useState(false);
 
   // Clone state
   const [cloneUrl, setCloneUrl] = useState('');
@@ -91,6 +95,7 @@ export default function Builder() {
           productDescription: product.description,
           niche,
           questionCount,
+          useConditionals,
         }),
       });
 
@@ -288,6 +293,20 @@ export default function Builder() {
                   <p style={{ marginTop: 10, fontSize: '0.8rem', color: 'var(--text-muted)' }}>⚡ Páginas de dica são inseridas automaticamente entre seções</p>
                 </div>
 
+                {/* Conditional routing toggle */}
+                <div className="card" style={{ padding: 24, marginBottom: 28 }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer' }}>
+                    <div style={{ position: 'relative', width: 44, height: 24, borderRadius: 12, background: useConditionals ? 'var(--primary)' : '#d1d5db', transition: 'background 0.2s', flexShrink: 0 }}>
+                      <div style={{ position: 'absolute', top: 2, left: useConditionals ? 22 : 2, width: 20, height: 20, borderRadius: '50%', background: '#fff', boxShadow: '0 1px 3px rgba(0,0,0,0.2)', transition: 'left 0.2s' }} />
+                      <input type="checkbox" checked={useConditionals} onChange={e => setUseConditionals(e.target.checked)} style={{ opacity: 0, position: 'absolute', inset: 0, cursor: 'pointer' }} />
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '0.92rem', fontWeight: 600, color: 'var(--text-primary)' }}>🔀 Fluxo condicional</div>
+                      <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: 2 }}>A IA cria caminhos diferentes com base nas respostas do usuário (ex: homem/mulher, iniciante/avançado)</div>
+                    </div>
+                  </label>
+                </div>
+
                 {genError && (
                   <div style={{ padding: 14, borderRadius: 12, background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.2)', color: 'var(--danger)', fontSize: '0.88rem', marginBottom: 16 }}>
                     ⚠️ {genError}
@@ -447,6 +466,9 @@ export default function Builder() {
                   <button className="btn btn-ghost" onClick={() => navigate('/')}>← Voltar ao início</button>
                   <button className="btn btn-primary" onClick={() => window.open(`/q/${published.id}`, '_blank')}><Eye size={16} /> Ver quiz ao vivo</button>
                 </div>
+
+                {/* Domain Settings */}
+                <DomainSettings quizId={published.id} />
               </div>
             )}
           </>

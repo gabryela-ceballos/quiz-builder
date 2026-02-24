@@ -1,9 +1,9 @@
-// cloneService.js — Calls server-side Puppeteer to scrape quiz page-by-page
-// Then normalizes into Player-compatible format
+// cloneService.js — Clone + Optimize quiz from URL
+// Uses SSE (Server-Sent Events) for real-time progress
 
 const API_BASE = import.meta.env.DEV ? 'http://localhost:3001' : '';
 
-// ── Build Player-compatible quiz object from server response ──
+// ── Build Player/Builder-compatible quiz object from server response ──
 function buildPlayerQuiz(extracted) {
     const pages = (extracted.pages || []).map((p, i) => {
         const page = { ...p, id: `p_clone_${i}`, sectionIndex: 0 };
@@ -41,13 +41,14 @@ function buildPlayerQuiz(extracted) {
         emoji: '🔗',
         primaryColor: primary,
         colorPalette: [primary],
-        niche: extracted.niche || 'outro',
+        niche: extracted.niche || extracted.metadata?.niche || 'outro',
         metadata: {
-            niche: extracted.niche || 'outro',
+            niche: extracted.niche || extracted.metadata?.niche || 'outro',
             subTheme: extracted.quizName || '',
             tone: 'empático',
             palette: [primary],
             emojiStyle: 'moderate',
+            ...(extracted.metadata || {}),
         },
         sections: [{ label: 'Quiz Clonado', startIndex: 0 }],
         welcome: extracted.welcome || { headline: extracted.quizName || 'Quiz', subheadline: '', cta: 'Começar →' },
@@ -61,34 +62,57 @@ function buildPlayerQuiz(extracted) {
     };
 }
 
-// ═══ MAIN EXPORT ═══
-export async function cloneFromUrl(url, onProgress) {
+// ═══ Clone via SSE stream (real-time progress) ═══
+export async function cloneAndOptimize(url, niche, mode, productDescription, onProgress) {
     if (!url?.trim()) throw new Error('URL inválida');
 
-    if (onProgress) onProgress('fetching', '🌐 Conectando ao servidor...');
+    return new Promise((resolve, reject) => {
+        const params = new URLSearchParams({ url: url.trim() });
+        const evtSource = new EventSource(`${API_BASE}/api/clone-stream?${params}`);
+        let quizData = null;
 
-    // Call the server-side Puppeteer scraping endpoint
-    if (onProgress) onProgress('scraping', '🔍 Abrindo quiz no navegador...');
+        evtSource.onmessage = (event) => {
+            try {
+                const data = JSON.parse(event.data);
 
-    const res = await fetch(`${API_BASE}/api/clone-quiz`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: url.trim() }),
+                if (data.type === 'progress') {
+                    if (onProgress) onProgress(data.stage, data.msg, data);
+                }
+                else if (data.type === 'result') {
+                    quizData = data.quiz;
+                }
+                else if (data.type === 'error') {
+                    evtSource.close();
+                    reject(new Error(data.error || 'Erro ao clonar'));
+                }
+
+                // Complete = close and resolve
+                if (data.stage === 'complete') {
+                    evtSource.close();
+                    if (quizData) {
+                        resolve(buildPlayerQuiz(quizData));
+                    } else {
+                        reject(new Error('Nenhum dado recebido do servidor'));
+                    }
+                }
+            } catch (e) {
+                console.error('SSE parse error:', e);
+            }
+        };
+
+        evtSource.onerror = (err) => {
+            evtSource.close();
+            // If we got quiz data before error, still resolve
+            if (quizData) {
+                resolve(buildPlayerQuiz(quizData));
+            } else {
+                reject(new Error('Conexão perdida com o servidor. Tente novamente.'));
+            }
+        };
     });
+}
 
-    if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.error || 'Erro ao clonar quiz');
-    }
-
-    if (onProgress) onProgress('building', '🧱 Montando quiz...');
-    const extracted = await res.json();
-    console.log(`[Clone] Server returned: ${extracted.pages?.length || 0} pages`);
-
-    if (!extracted.pages?.length) {
-        throw new Error('Não foi possível extrair páginas do quiz. Verifique se o link é válido.');
-    }
-
-    if (onProgress) onProgress('done', '✅ Quiz clonado com sucesso!');
-    return buildPlayerQuiz(extracted);
+// ═══ Clone from URL (legacy, non-SSE) ═══
+export async function cloneFromUrl(url, onProgress) {
+    return cloneAndOptimize(url, 'outro', 'clone_only', '', onProgress);
 }

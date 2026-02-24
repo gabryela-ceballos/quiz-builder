@@ -598,8 +598,25 @@ export default function Player() {
   };
 
   const isPageBuilder = !!quiz.steps;
+  const stepPageMap = quiz.stepPageMap || {};
+  const stepGoToMap = quiz.stepGoToMap || {};
 
-  const advancePage = () => {
+  const advancePage = (targetStepId) => {
+    // Priority: option-level goToStep → step-level goToStep → next page
+    const effectiveTarget = targetStepId || stepGoToMap[pageIndex] || null;
+
+    // Conditional routing: if target is set, jump to that step
+    if (effectiveTarget === '__end') {
+      if (isPageBuilder) { setScreen('done'); recordEvent(quiz.id, 'complete'); }
+      else if (quiz.collectLead) setScreen('lead');
+      else finishQuiz();
+      return;
+    }
+    if (effectiveTarget && stepPageMap[effectiveTarget] !== undefined) {
+      setPageIndex(stepPageMap[effectiveTarget]); setMultiSelect([]); setOptionAnim(null);
+      return;
+    }
+    // Default: go to next page
     const next = pageIndex + 1;
     if (next >= pages.length) {
       if (isPageBuilder) { setScreen('done'); recordEvent(quiz.id, 'complete'); }
@@ -622,11 +639,15 @@ export default function Player() {
     setOptionAnim(idx);
     setAnswers(a => ({ ...a, [pageIndex]: idx }));
     recordEvent(quiz.id, 'answer', { questionIndex: pageIndex, optionIndex: idx });
-    setTimeout(advancePage, 400);
+    // Check for conditional routing on selected option
+    const opts = getOptions();
+    const selectedOpt = opts[idx];
+    const goTo = selectedOpt?.goToStep || null;
+    setTimeout(() => advancePage(goTo), 400);
   };
   const handleMultiToggle = (idx) => setMultiSelect(prev => prev.includes(idx) ? prev.filter(i => i !== idx) : [...prev, idx]);
   const handleMultiSubmit = () => { if (!multiSelect.length) return; setAnswers(a => ({ ...a, [pageIndex]: multiSelect })); recordEvent(quiz.id, 'answer', { questionIndex: pageIndex, optionIndex: multiSelect[0] || 0 }); advancePage(); };
-  const handleLeadSubmit = (e) => { e.preventDefault(); saveLead(quiz.id, { ...leadData, date: new Date().toISOString() }); finishQuiz(); };
+  const handleLeadSubmit = (e) => { e.preventDefault(); saveLead(quiz.id, { ...leadData, answers, result: result?.result?.name || '', date: new Date().toISOString() }); finishQuiz(); };
   const handleCTA = () => { recordEvent(quiz.id, 'cta_click'); const url = result?.result?.ctaUrl; if (url) window.open(url, '_blank'); };
   const goBack = () => { if (pageIndex > 0) { setPageIndex(pageIndex - 1); setMultiSelect([]); setOptionAnim(null); } };
 

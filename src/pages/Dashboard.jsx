@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Download } from 'lucide-react';
 import { getQuiz, getLeads, getAnalytics } from '../hooks/useQuizStore';
+import DomainSettings from '../components/DomainSettings';
 
 export default function Dashboard() {
     const { id } = useParams();
@@ -140,6 +141,9 @@ export default function Dashboard() {
                         </table>
                     )}
                 </div>
+
+                {/* Domain Settings */}
+                <DomainSettings quizId={id} />
             </div>
         </div>
     );

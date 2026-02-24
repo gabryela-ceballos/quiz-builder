@@ -17,7 +17,7 @@ const S = {
     chip: (a, c) => ({ padding: '5px 8px', borderRadius: 6, border: `1px solid ${a ? (c || 'var(--primary)') : 'var(--border)'}`, background: a ? `${c || 'var(--primary)'}0a` : '#f9fafb', cursor: 'pointer', textAlign: 'center', fontSize: '0.7rem', color: a ? (c || 'var(--primary)') : 'var(--text-muted)', transition: 'all 0.15s', flex: 1 }),
 };
 
-export default function PropertiesPanel({ block, onChange, config, onConfigChange }) {
+export default function PropertiesPanel({ block, onChange, config, onConfigChange, steps = [] }) {
     const [tab, setTab] = useState('component');
     if (!block) return <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)' }}><MousePointer size={28} style={{ marginBottom: 8, opacity: 0.3 }} /><p style={{ fontSize: '0.8rem' }}>Selecione um bloco</p></div>;
 
@@ -68,34 +68,53 @@ export default function PropertiesPanel({ block, onChange, config, onConfigChang
                     </div>
 
                     {/* CHOICE: layout + multi + question + options */}
-                    {block.type === 'choice' && (<>
+                    {['choice', 'single-choice'].includes(block.type) && (<>
                         <div style={S.section}><div style={S.sTitle}>Layout</div><div style={{ display: 'flex', gap: 4 }}>{OPTION_LAYOUTS.map(l => <div key={l.key} style={S.chip(block.optionLayout === l.key)} onClick={() => u('optionLayout', l.key)}>{l.icon}<br />{l.label}</div>)}</div></div>
                         <div style={S.section}><label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.78rem', color: 'var(--text-secondary)', cursor: 'pointer' }}><input type="checkbox" checked={block.multiSelect || false} onChange={e => u('multiSelect', e.target.checked)} style={{ accentColor: 'var(--primary)' }} />Multi-seleção</label></div>
+                        <div style={S.section}><label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.78rem', color: 'var(--text-secondary)', cursor: 'pointer' }}><input type="checkbox" checked={block.required !== false} onChange={e => u('required', e.target.checked)} style={{ accentColor: 'var(--primary)' }} />Obrigatório</label></div>
                     </>)}
 
                     {/* Question text */}
-                    {['choice', 'image-select', 'likert', 'statement'].includes(block.type) && <div style={S.section}><div style={S.sTitle}>Pergunta</div><textarea style={S.textarea} value={block.text || ''} onChange={e => u('text', e.target.value)} /></div>}
+                    {['choice', 'image-select', 'likert', 'statement', 'single-choice', 'yes-no', 'scroll-picker', 'weight-picker', 'number-input', 'email-input', 'phone-input', 'textarea-input', 'date-input', 'video-response'].includes(block.type) && <div style={S.section}><div style={S.sTitle}>Pergunta</div><textarea style={S.textarea} value={block.text || ''} onChange={e => u('text', e.target.value)} /></div>}
+                    {['choice', 'image-select', 'single-choice', 'yes-no'].includes(block.type) && <div style={S.section}><div style={S.sTitle}>Descrição</div><textarea style={{ ...S.textarea, minHeight: 40 }} value={block.desc || ''} onChange={e => u('desc', e.target.value)} placeholder="Texto de ajuda opcional" /></div>}
                     {block.type === 'statement' && <div style={S.section}><div style={S.sTitle}>Citação</div><textarea style={S.textarea} value={block.quote || ''} onChange={e => u('quote', e.target.value)} /></div>}
 
                     {/* Options for choice/image-select */}
-                    {['choice', 'image-select'].includes(block.type) && (
+                    {['choice', 'image-select', 'single-choice'].includes(block.type) && (
                         <div style={S.section}><div style={S.sTitle}>Opções ({(block.options || []).length})</div>
                             {(block.options || []).map((o, i) => (
-                                <div key={i} style={{ ...S.optRow, alignItems: 'center' }}>
-                                    {/* Image upload thumbnail OR emoji */}
-                                    {o.image && typeof o.image === 'string' && o.image.startsWith('data:') ? (
-                                        <div style={{ position: 'relative', width: 36, height: 36, flexShrink: 0 }}>
-                                            <img src={o.image} alt="" style={{ width: 36, height: 36, borderRadius: 8, objectFit: 'cover' }} />
-                                            <button onClick={() => uOpt(i, 'image', '')} style={{ position: 'absolute', top: -4, right: -4, width: 16, height: 16, borderRadius: '50%', background: 'var(--danger)', color: '#fff', border: 'none', fontSize: 9, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1 }}>✕</button>
+                                <div key={i} style={{ marginBottom: 6 }}>
+                                    <div style={{ ...S.optRow, alignItems: 'center' }}>
+                                        {o.image && typeof o.image === 'string' && o.image.startsWith('data:') ? (
+                                            <div style={{ position: 'relative', width: 36, height: 36, flexShrink: 0 }}>
+                                                <img src={o.image} alt="" style={{ width: 36, height: 36, borderRadius: 8, objectFit: 'cover' }} />
+                                                <button onClick={() => uOpt(i, 'image', '')} style={{ position: 'absolute', top: -4, right: -4, width: 16, height: 16, borderRadius: '50%', background: 'var(--danger)', color: '#fff', border: 'none', fontSize: 9, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1 }}>✕</button>
+                                            </div>
+                                        ) : (
+                                            <label style={{ width: 36, height: 36, borderRadius: 8, border: '1px dashed #d1d5db', background: '#f9fafb', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0, transition: 'border-color 0.15s' }} title="Upload imagem">
+                                                {o.emoji ? <span style={{ fontSize: 16 }}>{o.emoji}</span> : <ImageIcon size={14} style={{ color: 'var(--text-muted)' }} />}
+                                                <input type="file" accept="image/*" hidden onChange={e => handleImg(e, i)} />
+                                            </label>
+                                        )}
+                                        <input style={{ ...S.input, flex: 1 }} value={o.text} onChange={e => uOpt(i, 'text', e.target.value)} placeholder={`Opção ${i + 1}`} />
+                                        <input style={{ ...S.input, width: 40 }} value={o.points || ''} onChange={e => uOpt(i, 'points', Number(e.target.value))} placeholder="Pts" title="Pontos" type="number" />
+                                        <button style={S.smallBtn} onClick={() => rmOpt(i)}><Trash2 size={12} /></button>
+                                    </div>
+                                    {/* Conditional routing */}
+                                    {steps.length > 1 && (
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 3, paddingLeft: 44 }}>
+                                            <span style={{ fontSize: '0.6rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>↳ Ir para:</span>
+                                            <select style={{ ...S.input, fontSize: '0.65rem', padding: '3px 4px', flex: 1, color: o.goToStep ? 'var(--primary)' : 'var(--text-muted)' }}
+                                                value={o.goToStep || ''}
+                                                onChange={e => uOpt(i, 'goToStep', e.target.value || null)}>
+                                                <option value="">Próxima etapa</option>
+                                                {steps.map((s, si) => (
+                                                    <option key={s.id} value={s.id}>{si + 1}. {s.name}</option>
+                                                ))}
+                                                <option value="__end">Finalizar quiz</option>
+                                            </select>
                                         </div>
-                                    ) : (
-                                        <label style={{ width: 36, height: 36, borderRadius: 8, border: '1px dashed #d1d5db', background: '#f9fafb', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0, transition: 'border-color 0.15s' }} title="Upload imagem">
-                                            {o.emoji ? <span style={{ fontSize: 16 }}>{o.emoji}</span> : <ImageIcon size={14} style={{ color: 'var(--text-muted)' }} />}
-                                            <input type="file" accept="image/*" hidden onChange={e => handleImg(e, i)} />
-                                        </label>
                                     )}
-                                    <input style={{ ...S.input, flex: 1 }} value={o.text} onChange={e => uOpt(i, 'text', e.target.value)} placeholder={`Opção ${i + 1}`} />
-                                    <button style={S.smallBtn} onClick={() => rmOpt(i)}><Trash2 size={12} /></button>
                                 </div>
                             ))}
                             <button style={S.addBtn} onClick={addOpt}><Plus size={12} /> Opção</button>
@@ -203,7 +222,7 @@ export default function PropertiesPanel({ block, onChange, config, onConfigChang
                     </>)}
 
                     {/* Video */}
-                    {block.type === 'video' && (<><div style={S.section}><div style={S.sTitle}>URL do vídeo</div><input style={S.input} value={block.videoUrl || ''} onChange={e => u('videoUrl', e.target.value)} placeholder="https://youtube.com/watch?v=..." /></div></>)}
+                    {block.type === 'video' && (<><div style={S.section}><div style={S.sTitle}>URL do vídeo</div><input style={S.input} value={block.videoUrl || ''} onChange={e => u('videoUrl', e.target.value)} placeholder="YouTube ou Vturb" /><div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', marginTop: 4 }}>Suporta YouTube e Vturb</div></div></>)}
 
                     {/* Button */}
                     {block.type === 'button' && (<>
@@ -331,6 +350,173 @@ export default function PropertiesPanel({ block, onChange, config, onConfigChang
                             <div style={{ ...S.section, flex: 1 }}><div style={S.sTitle}>Máx</div><input type="number" style={S.input} value={block.max || 300} onChange={e => u('max', Number(e.target.value))} /></div>
                         </div>
                     </>)}
+
+                    {/* Yes/No */}
+                    {block.type === 'yes-no' && (<>
+                        <div style={S.section}><div style={S.sTitle}>Label Sim</div><div style={{ display: 'flex', gap: 6 }}><input style={{ ...S.input, width: 40 }} value={block.yesEmoji || ''} onChange={e => u('yesEmoji', e.target.value)} /><input style={{ ...S.input, flex: 1 }} value={block.yesLabel || ''} onChange={e => u('yesLabel', e.target.value)} /></div></div>
+                        <div style={S.section}><div style={S.sTitle}>Label Não</div><div style={{ display: 'flex', gap: 6 }}><input style={{ ...S.input, width: 40 }} value={block.noEmoji || ''} onChange={e => u('noEmoji', e.target.value)} /><input style={{ ...S.input, flex: 1 }} value={block.noLabel || ''} onChange={e => u('noLabel', e.target.value)} /></div></div>
+                    </>)}
+
+                    {/* Email Input */}
+                    {block.type === 'email-input' && (<>
+                        <div style={S.section}><div style={S.sTitle}>Placeholder</div><input style={S.input} value={block.placeholder || ''} onChange={e => u('placeholder', e.target.value)} /></div>
+                        <div style={S.section}><label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.78rem', color: 'var(--text-secondary)', cursor: 'pointer' }}><input type="checkbox" checked={block.required !== false} onChange={e => u('required', e.target.checked)} style={{ accentColor: 'var(--primary)' }} />Obrigatório</label></div>
+                    </>)}
+
+                    {/* Phone Input */}
+                    {block.type === 'phone-input' && (<>
+                        <div style={S.section}><div style={S.sTitle}>Placeholder</div><input style={S.input} value={block.placeholder || ''} onChange={e => u('placeholder', e.target.value)} /></div>
+                        <div style={S.section}><label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.78rem', color: 'var(--text-secondary)', cursor: 'pointer' }}><input type="checkbox" checked={block.required !== false} onChange={e => u('required', e.target.checked)} style={{ accentColor: 'var(--primary)' }} />Obrigatório</label></div>
+                    </>)}
+
+                    {/* Textarea Input */}
+                    {block.type === 'textarea-input' && (<>
+                        <div style={S.section}><div style={S.sTitle}>Placeholder</div><input style={S.input} value={block.placeholder || ''} onChange={e => u('placeholder', e.target.value)} /></div>
+                        <div style={S.section}><div style={S.sTitle}>Max caracteres</div><input type="number" style={S.input} value={block.maxLength || 500} onChange={e => u('maxLength', Number(e.target.value))} /></div>
+                        <div style={S.section}><label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.78rem', color: 'var(--text-secondary)', cursor: 'pointer' }}><input type="checkbox" checked={block.required !== false} onChange={e => u('required', e.target.checked)} style={{ accentColor: 'var(--primary)' }} />Obrigatório</label></div>
+                    </>)}
+
+                    {/* Date Input */}
+                    {block.type === 'date-input' && (<>
+                        <div style={S.section}><label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.78rem', color: 'var(--text-secondary)', cursor: 'pointer' }}><input type="checkbox" checked={block.required !== false} onChange={e => u('required', e.target.checked)} style={{ accentColor: 'var(--primary)' }} />Obrigatório</label></div>
+                    </>)}
+
+                    {/* Weight Picker */}
+                    {block.type === 'weight-picker' && (<>
+                        <div style={S.section}><div style={S.sTitle}>Unidade</div><input style={S.input} value={block.unit || ''} onChange={e => u('unit', e.target.value)} placeholder="kg" /></div>
+                        <div style={{ display: 'flex', gap: 6 }}>
+                            <div style={{ ...S.section, flex: 1 }}><div style={S.sTitle}>Mín</div><input type="number" style={S.input} value={block.min || 30} onChange={e => u('min', Number(e.target.value))} /></div>
+                            <div style={{ ...S.section, flex: 1 }}><div style={S.sTitle}>Máx</div><input type="number" style={S.input} value={block.max || 200} onChange={e => u('max', Number(e.target.value))} /></div>
+                        </div>
+                        <div style={S.section}><div style={S.sTitle}>Valor padrão</div><input type="number" style={S.input} value={block.defaultValue || 70} onChange={e => u('defaultValue', Number(e.target.value))} /></div>
+                    </>)}
+
+                    {/* Audio */}
+                    {block.type === 'audio' && (<>
+                        <div style={S.section}><div style={S.sTitle}>Áudio</div>
+                            <input style={S.input} value={block.audioUrl || ''} onChange={e => u('audioUrl', e.target.value)} placeholder="https://... ou faça upload" />
+                            <label style={{ ...S.addBtn, marginTop: 6 }}><Upload size={12} /> Upload áudio<input type="file" accept="audio/*" hidden onChange={async e => { const f = e.target.files?.[0]; if (!f) return; const reader = new FileReader(); reader.onload = ev => u('audioUrl', ev.target.result); reader.readAsDataURL(f); }} /></label>
+                        </div>
+                        <div style={S.section}><div style={S.sTitle}>Nome do remetente</div><input style={S.input} value={block.senderName || ''} onChange={e => u('senderName', e.target.value)} placeholder="Ex: Dr. João" /></div>
+                        <div style={S.section}><div style={S.sTitle}>Imagem</div><label style={S.addBtn}><Upload size={12} /> Upload<input type="file" accept="image/*" hidden onChange={e => handleImg(e)} /></label>{block.imageUrl && <img src={block.imageUrl} alt="" style={{ width: '100%', height: 50, objectFit: 'cover', borderRadius: 6, marginTop: 6 }} />}</div>
+                    </>)}
+
+                    {/* Video Response */}
+                    {block.type === 'video-response' && (<>
+                        <div style={S.section}><div style={S.sTitle}>URL do vídeo</div><input style={S.input} value={block.videoUrl || ''} onChange={e => u('videoUrl', e.target.value)} placeholder="YouTube ou Vturb" /><div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', marginTop: 4 }}>Suporta YouTube e Vturb</div></div>
+                        <div style={S.section}><div style={S.sTitle}>Opções ({(block.options || []).length})</div>
+                            {(block.options || []).map((opt, i) => (
+                                <div key={i} style={{ display: 'flex', gap: 6, marginBottom: 6, alignItems: 'center' }}>
+                                    <span style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-muted)', width: 16, textAlign: 'center' }}>{opt.value || String.fromCharCode(65 + i)}</span>
+                                    <input style={{ ...S.input, flex: 1 }} value={opt.text || ''} onChange={e => { const opts = [...(block.options || [])]; opts[i] = { ...opts[i], text: e.target.value }; u('options', opts); }} />
+                                    <button style={S.smallBtn} onClick={() => u('options', (block.options || []).filter((_, j) => j !== i))}><Trash2 size={12} /></button>
+                                </div>
+                            ))}
+                            <button style={S.addBtn} onClick={() => u('options', [...(block.options || []), { text: '', value: String.fromCharCode(65 + (block.options || []).length) }])}><Plus size={12} /> Opção</button>
+                        </div>
+                    </>)}
+
+                    {/* Notification */}
+                    {block.type === 'notification' && (<>
+                        <div style={S.section}><div style={S.sTitle}>Título</div><input style={S.input} value={block.title || ''} onChange={e => u('title', e.target.value)} /></div>
+                        <div style={S.section}><div style={S.sTitle}>Texto</div><textarea style={S.textarea} value={block.text || ''} onChange={e => u('text', e.target.value)} /></div>
+                        <div style={S.section}><div style={S.sTitle}>Ícone</div><input style={{ ...S.input, width: 50 }} value={block.icon || ''} onChange={e => u('icon', e.target.value)} /></div>
+                        <div style={S.section}><div style={S.sTitle}>Duração (seg)</div><input type="number" style={S.input} value={block.duration || 5} onChange={e => u('duration', Number(e.target.value))} /></div>
+                    </>)}
+
+                    {/* Level */}
+                    {block.type === 'level' && (<>
+                        <div style={S.section}><div style={S.sTitle}>Título</div><input style={S.input} value={block.title || ''} onChange={e => u('title', e.target.value)} /></div>
+                        <div style={S.section}><div style={S.sTitle}>Label</div><input style={S.input} value={block.label || ''} onChange={e => u('label', e.target.value)} /></div>
+                        <div style={{ display: 'flex', gap: 6 }}>
+                            <div style={{ ...S.section, flex: 1 }}><div style={S.sTitle}>Valor</div><input type="number" style={S.input} value={block.value || 3} onChange={e => u('value', Number(e.target.value))} /></div>
+                            <div style={{ ...S.section, flex: 1 }}><div style={S.sTitle}>Máximo</div><input type="number" style={S.input} value={block.maxValue || 5} onChange={e => u('maxValue', Number(e.target.value))} /></div>
+                        </div>
+                        <div style={S.section}><div style={S.sTitle}>Cor</div><div style={{ display: 'flex', gap: 6 }}><input type="color" value={block.color || '#f59e0b'} onChange={e => u('color', e.target.value)} style={{ width: 30, height: 28, border: 'none', borderRadius: 4, cursor: 'pointer' }} /><input style={{ ...S.input, flex: 1 }} value={block.color || ''} onChange={e => u('color', e.target.value)} /></div></div>
+                    </>)}
+
+                    {/* FAQ */}
+                    {block.type === 'faq' && (<>
+                        <div style={S.section}><div style={S.sTitle}>Título</div><input style={S.input} value={block.title || ''} onChange={e => u('title', e.target.value)} /></div>
+                        <div style={S.section}><div style={S.sTitle}>Itens ({(block.items || []).length})</div>
+                            {(block.items || []).map((item, i) => (
+                                <div key={i} style={{ marginBottom: 8, padding: 8, background: '#f9fafb', borderRadius: 8, border: '1px solid var(--border)' }}>
+                                    <input style={{ ...S.input, marginBottom: 4 }} value={item.q || ''} onChange={e => { const its = [...(block.items || [])]; its[i] = { ...its[i], q: e.target.value }; u('items', its); }} placeholder="Pergunta" />
+                                    <textarea style={{ ...S.textarea, minHeight: 40 }} value={item.a || ''} onChange={e => { const its = [...(block.items || [])]; its[i] = { ...its[i], a: e.target.value }; u('items', its); }} placeholder="Resposta" />
+                                    <button style={{ ...S.smallBtn, marginTop: 4 }} onClick={() => u('items', (block.items || []).filter((_, j) => j !== i))}><Trash2 size={12} /> Remover</button>
+                                </div>
+                            ))}
+                            <button style={S.addBtn} onClick={() => u('items', [...(block.items || []), { q: '', a: '' }])}><Plus size={12} /> Adicionar</button>
+                        </div>
+                    </>)}
+
+                    {/* Before/After */}
+                    {block.type === 'before-after' && (<>
+                        <div style={S.section}><div style={S.sTitle}>Título</div><input style={S.input} value={block.title || ''} onChange={e => u('title', e.target.value)} /></div>
+                        <div style={S.section}><div style={S.sTitle}>Label Antes</div><input style={S.input} value={block.beforeLabel || ''} onChange={e => u('beforeLabel', e.target.value)} /></div>
+                        <div style={S.section}><div style={S.sTitle}>Imagem Antes</div><label style={S.addBtn}><Upload size={12} /> Upload<input type="file" accept="image/*" hidden onChange={async e => { const f = e.target.files?.[0]; if (f) { const { dataUrl } = await compressAndStore(f); u('beforeImage', dataUrl); } }} /></label>{block.beforeImage && <img src={block.beforeImage} alt="" style={{ width: '100%', height: 50, objectFit: 'cover', borderRadius: 6, marginTop: 6 }} />}</div>
+                        <div style={S.section}><div style={S.sTitle}>Label Depois</div><input style={S.input} value={block.afterLabel || ''} onChange={e => u('afterLabel', e.target.value)} /></div>
+                        <div style={S.section}><div style={S.sTitle}>Imagem Depois</div><label style={S.addBtn}><Upload size={12} /> Upload<input type="file" accept="image/*" hidden onChange={async e => { const f = e.target.files?.[0]; if (f) { const { dataUrl } = await compressAndStore(f); u('afterImage', dataUrl); } }} /></label>{block.afterImage && <img src={block.afterImage} alt="" style={{ width: '100%', height: 50, objectFit: 'cover', borderRadius: 6, marginTop: 6 }} />}</div>
+                    </>)}
+
+                    {/* Carousel */}
+                    {block.type === 'carousel' && (<>
+                        <div style={S.section}><div style={S.sTitle}>Slides ({(block.slides || []).length})</div>
+                            {(block.slides || []).map((slide, i) => (
+                                <div key={i} style={{ marginBottom: 8, padding: 8, background: '#f9fafb', borderRadius: 8, border: '1px solid var(--border)' }}>
+                                    <input style={{ ...S.input, marginBottom: 4 }} value={slide.text || ''} onChange={e => { const ss = [...(block.slides || [])]; ss[i] = { ...ss[i], text: e.target.value }; u('slides', ss); }} placeholder={`Slide ${i + 1}`} />
+                                    <label style={S.addBtn}><Upload size={12} /> Imagem<input type="file" accept="image/*" hidden onChange={async e => { const f = e.target.files?.[0]; if (f) { const { dataUrl } = await compressAndStore(f); const ss = [...(block.slides || [])]; ss[i] = { ...ss[i], image: dataUrl }; u('slides', ss); } }} /></label>
+                                    {slide.image && <img src={slide.image} alt="" style={{ width: '100%', height: 50, objectFit: 'cover', borderRadius: 6, marginTop: 4 }} />}
+                                    <button style={{ ...S.smallBtn, marginTop: 4 }} onClick={() => u('slides', (block.slides || []).filter((_, j) => j !== i))}><Trash2 size={12} /></button>
+                                </div>
+                            ))}
+                            <button style={S.addBtn} onClick={() => u('slides', [...(block.slides || []), { text: '', image: '' }])}><Plus size={12} /> Slide</button>
+                        </div>
+                    </>)}
+
+                    {/* Spacer */}
+                    {block.type === 'spacer' && (<>
+                        <div style={S.section}><div style={S.sTitle}>Altura ({block.height || 40}px)</div><input type="range" min={8} max={120} step={4} value={block.height || 40} onChange={e => u('height', Number(e.target.value))} style={{ width: '100%', accentColor: 'var(--primary)' }} /></div>
+                    </>)}
+
+                    {/* HTML/Script */}
+                    {block.type === 'html-script' && (<>
+                        <div style={S.section}><div style={S.sTitle}>Código HTML/JS</div><textarea style={{ ...S.textarea, minHeight: 120, fontFamily: 'monospace', fontSize: '0.75rem' }} value={block.code || ''} onChange={e => u('code', e.target.value)} placeholder="<div>...</div>" /></div>
+                        <div style={S.section}><label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.78rem', color: 'var(--text-secondary)', cursor: 'pointer' }}><input type="checkbox" checked={block.executeOnLoad !== false} onChange={e => u('executeOnLoad', e.target.checked)} style={{ accentColor: 'var(--primary)' }} />Executar ao carregar</label></div>
+                    </>)}
+
+                    {/* Metrics */}
+                    {block.type === 'metrics' && (<>
+                        <div style={S.section}>
+                            <div style={S.sTitle}>Tipo de métrica</div>
+                            <select style={S.input} value={block.metricType || 'tmb'} onChange={e => u('metricType', e.target.value)}>
+                                <option value="tmb">🔥 TMB — Taxa Metabólica Basal</option>
+                                <option value="geb">⚡ GEB — Gasto Energético Basal</option>
+                                <option value="iag">📊 IAG — Índice de Adiposidade</option>
+                                <option value="pesoIdeal">⚖️ Peso Ideal</option>
+                                <option value="custom">📐 Personalizada</option>
+                            </select>
+                        </div>
+                        <div style={S.section}><div style={S.sTitle}>Título</div><input style={S.input} value={block.title || ''} onChange={e => u('title', e.target.value)} /></div>
+                        <div style={S.section}><div style={S.sTitle}>Descrição</div><textarea style={S.textarea} value={block.text || ''} onChange={e => u('text', e.target.value)} /></div>
+                    </>)}
+
+                    {/* Welcome block content */}
+                    {block.type === 'welcome' && (<>
+                        <div style={{ padding: '8px 10px', background: '#eef2ff', borderRadius: 10, marginBottom: 12, border: '1px solid #c7d2fe' }}>
+                            <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#4f46e5', marginBottom: 2 }}>🏠 Capa do Quiz</div>
+                            <div style={{ fontSize: '0.63rem', color: '#6366f1' }}>Tela inicial que o usuário vê antes de começar</div>
+                        </div>
+                        <div style={S.section}><div style={S.sTitle}>Emoji</div><input style={S.input} value={block.emoji || ''} onChange={e => u('emoji', e.target.value)} placeholder="Ex: 🔥 ou 💪" /></div>
+                        <div style={S.section}><div style={S.sTitle}>Headline</div><textarea style={{ ...S.textarea, minHeight: 50 }} value={block.headline || ''} onChange={e => u('headline', e.target.value)} placeholder="Descubra seu perfil ideal!" /></div>
+                        <div style={S.section}><div style={S.sTitle}>Subtítulo</div><textarea style={{ ...S.textarea, minHeight: 40 }} value={block.subtitle || ''} onChange={e => u('subtitle', e.target.value)} placeholder="Responda em 2 min e descubra" /></div>
+                        <div style={S.section}><div style={S.sTitle}>Texto do botão</div><input style={S.input} value={block.cta || ''} onChange={e => u('cta', e.target.value)} placeholder="Começar →" /></div>
+                        <div style={S.section}>
+                            <div style={S.sTitle}>Imagem de fundo</div>
+                            <input style={S.input} value={block.imageUrl || ''} onChange={e => u('imageUrl', e.target.value)} placeholder="URL da imagem..." />
+                            <input type="file" accept="image/*" style={{ marginTop: 6, fontSize: 11 }} onChange={async e => { const f = e.target.files[0]; if (f) { const { uploadImage } = await import('../hooks/useQuizStore'); const url = await uploadImage(f); if (url) u('imageUrl', url); } }} />
+                        </div>
+                    </>)}
                 </>)}
 
                 {tab === 'style' && (<>
@@ -451,21 +637,8 @@ export default function PropertiesPanel({ block, onChange, config, onConfigChang
                             style={{ width: '100%', accentColor: 'var(--primary)' }} />
                     </div>
 
-                    {/* Welcome block */}
+                    {/* Welcome block styling only */}
                     {block.type === 'welcome' && (<>
-                        <div style={{ padding: '8px 10px', background: '#eef2ff', borderRadius: 10, marginBottom: 12, border: '1px solid #c7d2fe' }}>
-                            <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#4f46e5', marginBottom: 2 }}>🏠 Capa do Quiz</div>
-                            <div style={{ fontSize: '0.63rem', color: '#6366f1' }}>Tela inicial que o usuário vê antes de começar</div>
-                        </div>
-                        <div style={S.section}><div style={S.sTitle}>Emoji</div><input style={S.input} value={block.emoji || ''} onChange={e => u('emoji', e.target.value)} placeholder="Ex: 🔥 ou 💪" /></div>
-                        <div style={S.section}><div style={S.sTitle}>Headline</div><textarea style={{ ...S.textarea, minHeight: 50 }} value={block.headline || ''} onChange={e => u('headline', e.target.value)} placeholder="Descubra seu perfil ideal!" /></div>
-                        <div style={S.section}><div style={S.sTitle}>Subtítulo</div><textarea style={{ ...S.textarea, minHeight: 40 }} value={block.subtitle || ''} onChange={e => u('subtitle', e.target.value)} placeholder="Responda em 2 min e descubra" /></div>
-                        <div style={S.section}><div style={S.sTitle}>Texto do botão</div><input style={S.input} value={block.cta || ''} onChange={e => u('cta', e.target.value)} placeholder="Começar →" /></div>
-                        <div style={S.section}>
-                            <div style={S.sTitle}>Imagem de fundo</div>
-                            <input style={S.input} value={block.imageUrl || ''} onChange={e => u('imageUrl', e.target.value)} placeholder="URL da imagem..." />
-                            <input type="file" accept="image/*" style={{ marginTop: 6, fontSize: 11 }} onChange={async e => { const f = e.target.files[0]; if (f) { const { uploadImage } = await import('../hooks/useQuizStore'); const url = await uploadImage(f); if (url) u('imageUrl', url); } }} />
-                        </div>
                         {block.imageUrl && (<>
                             <div style={S.section}><div style={S.sTitle}>Largura da imagem (%)</div><input type="range" min={20} max={100} value={block.imageWidth || 100} onChange={e => u('imageWidth', Number(e.target.value))} style={{ width: '100%', accentColor: 'var(--primary)' }} /><span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{block.imageWidth || 100}%</span></div>
                             <div style={S.section}><div style={S.sTitle}>Altura da imagem (px)</div><input type="range" min={80} max={400} value={block.imageHeightPx || 200} onChange={e => u('imageHeightPx', Number(e.target.value))} style={{ width: '100%', accentColor: 'var(--primary)' }} /><span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{block.imageHeightPx || 200}px</span></div>

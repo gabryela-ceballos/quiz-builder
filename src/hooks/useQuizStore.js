@@ -93,3 +93,84 @@ export async function getAnalytics(quizId) {
         return await res.json();
     } catch (_) { return { starts: 0, completes: 0, conversionRate: 0, events: [], answers: [] }; }
 }
+
+// ── Shares / Collaboration ─────────────────────────────
+export async function shareQuiz(quizId, email, role = 'editor') {
+    try {
+        const res = await fetch(`${API}/shares`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ quizId, sharedWith: email, role }),
+        });
+        return await res.json();
+    } catch (e) { return { error: e.message }; }
+}
+
+export async function getShares(quizId) {
+    try {
+        const res = await fetch(`${API}/shares/${quizId}`);
+        return await res.json();
+    } catch (_) { return []; }
+}
+
+export async function removeShare(id) {
+    try { await fetch(`${API}/shares/${id}`, { method: 'DELETE' }); } catch (_) { }
+}
+
+export async function getSharedQuizzes(email) {
+    try {
+        const res = await fetch(`${API}/shared-quizzes/${encodeURIComponent(email)}`);
+        return await res.json();
+    } catch (_) { return []; }
+}
+
+// ── Custom Domains ───────────────────────────────────
+export async function getAllDomains() {
+    try {
+        const res = await fetch(`${API}/domains-all`);
+        return await res.json();
+    } catch (_) { return []; }
+}
+
+export async function getDomains(quizId) {
+    try {
+        const res = await fetch(`${API}/domains/${quizId}`);
+        return await res.json();
+    } catch (_) { return []; }
+}
+
+export async function addDomain(quizId, domain) {
+    try {
+        const res = await fetch(`${API}/domains`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ quizId, domain }),
+        });
+        return await res.json();
+    } catch (e) {
+        console.error('Erro ao adicionar domínio:', e);
+        return { error: 'Erro de conexão' };
+    }
+}
+
+export async function removeDomain(id) {
+    try {
+        await fetch(`${API}/domains/${id}`, { method: 'DELETE' });
+    } catch (_) { }
+}
+
+export async function verifyDomain(id) {
+    try {
+        const res = await fetch(`${API}/domains/${id}/verify`, { method: 'POST' });
+        return await res.json();
+    } catch (e) {
+        return { status: 'error', message: 'Erro de conexão' };
+    }
+}
+
+export async function getServerInfo() {
+    try {
+        const res = await fetch(`${API}/server-info`);
+        return await res.json();
+    } catch (_) { return { hostname: 'seu-servidor.com' }; }
+}

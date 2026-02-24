@@ -1,27 +1,34 @@
-import { BrowserRouter, Routes, Route, useLocation } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, useLocation, Navigate } from 'react-router-dom';
 import Home from './pages/Home';
 import Builder from './pages/Builder';
 import PageBuilder from './pages/PageBuilder';
 import Player from './pages/Player';
 import Dashboard from './pages/Dashboard';
 import Admin from './pages/Admin';
+import Login from './pages/Login';
+import { isLoggedIn, isAdmin } from './hooks/useAuth';
+
+function ProtectedRoute({ children, adminOnly = false }) {
+  if (!isLoggedIn()) return <Navigate to="/login" replace />;
+  if (adminOnly && !isAdmin()) return <Navigate to="/" replace />;
+  return children;
+}
 
 function AppShell() {
   const location = useLocation();
-  const isPlayer = location.pathname.startsWith('/q/');
 
   return (
     <>
-
       <Routes>
-        <Route path="/" element={<Home />} />
-        <Route path="/builder" element={<Builder />} />
-        <Route path="/builder/page" element={<PageBuilder />} />
-        <Route path="/builder/page/:id" element={<PageBuilder />} />
-        <Route path="/builder/:id" element={<Builder />} />
+        <Route path="/login" element={isLoggedIn() ? <Navigate to="/" replace /> : <Login />} />
         <Route path="/q/:id" element={<Player />} />
-        <Route path="/dashboard/:id" element={<Dashboard />} />
-        <Route path="/admin" element={<Admin />} />
+        <Route path="/" element={<ProtectedRoute><Home /></ProtectedRoute>} />
+        <Route path="/builder" element={<ProtectedRoute><Builder /></ProtectedRoute>} />
+        <Route path="/builder/page" element={<ProtectedRoute><PageBuilder /></ProtectedRoute>} />
+        <Route path="/builder/page/:id" element={<ProtectedRoute><PageBuilder /></ProtectedRoute>} />
+        <Route path="/builder/:id" element={<ProtectedRoute><Builder /></ProtectedRoute>} />
+        <Route path="/dashboard/:id" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+        <Route path="/admin" element={<ProtectedRoute adminOnly><Admin /></ProtectedRoute>} />
       </Routes>
     </>
   );

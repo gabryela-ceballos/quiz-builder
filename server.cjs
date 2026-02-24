@@ -4,6 +4,8 @@ const cors = require('cors');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
+const dns = require('dns');
+const bcrypt = require('bcryptjs');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -34,11 +36,169 @@ db.exec(`
     data TEXT,
     created_at INTEGER DEFAULT (strftime('%s','now') * 1000)
   );
+  CREATE TABLE IF NOT EXISTS domains (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    quiz_id TEXT NOT NULL,
+    domain TEXT NOT NULL UNIQUE,
+    status TEXT DEFAULT 'pending',
+    verified_at INTEGER,
+    created_at INTEGER DEFAULT (strftime('%s','now') * 1000)
+  );
+  CREATE TABLE IF NOT EXISTS shares (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    quiz_id TEXT NOT NULL,
+    shared_with TEXT NOT NULL,
+    role TEXT DEFAULT 'editor',
+    created_at INTEGER DEFAULT (strftime('%s','now') * 1000),
+    UNIQUE(quiz_id, shared_with)
+  );
+  CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    email TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
+    role TEXT DEFAULT 'user',
+    created_at INTEGER DEFAULT (strftime('%s','now') * 1000),
+    last_login INTEGER
+  );
+  CREATE TABLE IF NOT EXISTS ai_usage (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    action TEXT NOT NULL,
+    detail TEXT,
+    tokens_used INTEGER DEFAULT 0,
+    cost_estimate REAL DEFAULT 0,
+    created_at INTEGER DEFAULT (strftime('%s','now') * 1000)
+  );
 `);
+
+// ── Server hostname (for CNAME instructions) ──
+const SERVER_HOSTNAME = process.env.SERVER_HOSTNAME || 'localhost:3001';
 
 // ── Middleware ──
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
+
+// ── Simple token helpers ──
+function makeToken(userId) {
+    return Buffer.from(JSON.stringify({ id: userId, ts: Date.now() })).toString('base64');
+}
+function parseToken(token) {
+    try { return JSON.parse(Buffer.from(token, 'base64').toString()); } catch { return null; }
+}
+
+// ── Auth middleware ──
+function requireAuth(req, res, next) {
+    const auth = req.headers.authorization;
+    if (!auth || !auth.startsWith('Bearer ')) return res.status(401).json({ error: 'Token necessário' });
+    const payload = parseToken(auth.slice(7));
+    if (!payload || !payload.id) return res.status(401).json({ error: 'Token inválido' });
+    const user = db.prepare('SELECT id, name, email, role, created_at, last_login FROM users WHERE id = ?').get(payload.id);
+    if (!user) return res.status(401).json({ error: 'Usuário não encontrado' });
+    req.user = user;
+    next();
+}
+function requireAdmin(req, res, next) {
+    requireAuth(req, res, () => {
+        if (req.user.role !== 'admin') return res.status(403).json({ error: 'Acesso negado' });
+        next();
+    });
+}
+
+// ── Auth endpoints ──
+app.post('/api/auth/register', (req, res) => {
+    const { name, email, password } = req.body;
+    if (!name || !email || !password) return res.status(400).json({ error: 'Nome, email e senha obrigatórios' });
+    if (password.length < 4) return res.status(400).json({ error: 'Senha deve ter pelo menos 4 caracteres' });
+
+    const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(email.toLowerCase().trim());
+    if (existing) return res.status(409).json({ error: 'Email já cadastrado' });
+
+    const hash = bcrypt.hashSync(password, 10);
+    // First user becomes admin
+    const userCount = db.prepare('SELECT COUNT(*) as c FROM users').get().c;
+    const role = userCount === 0 ? 'admin' : 'user';
+
+    const result = db.prepare('INSERT INTO users (name, email, password_hash, role) VALUES (?, ?, ?, ?)').run(name.trim(), email.toLowerCase().trim(), hash, role);
+    const token = makeToken(result.lastInsertRowid);
+    res.json({ token, user: { id: result.lastInsertRowid, name: name.trim(), email: email.toLowerCase().trim(), role } });
+});
+
+app.post('/api/auth/login', (req, res) => {
+    const { email, password } = req.body;
+    if (!email || !password) return res.status(400).json({ error: 'Email e senha obrigatórios' });
+
+    const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email.toLowerCase().trim());
+    if (!user) return res.status(401).json({ error: 'Credenciais inválidas' });
+
+    if (!bcrypt.compareSync(password, user.password_hash)) return res.status(401).json({ error: 'Credenciais inválidas' });
+
+    db.prepare('UPDATE users SET last_login = ? WHERE id = ?').run(Date.now(), user.id);
+    const token = makeToken(user.id);
+    res.json({ token, user: { id: user.id, name: user.name, email: user.email, role: user.role } });
+});
+
+app.get('/api/auth/me', requireAuth, (req, res) => {
+    res.json(req.user);
+});
+
+// ── Admin endpoints ──
+app.get('/api/admin/stats', requireAdmin, (req, res) => {
+    const totalUsers = db.prepare('SELECT COUNT(*) as c FROM users').get().c;
+    const totalQuizzes = db.prepare('SELECT COUNT(*) as c FROM quizzes').get().c;
+    const totalLeads = db.prepare('SELECT COUNT(*) as c FROM leads').get().c;
+    const totalDomains = db.prepare('SELECT COUNT(*) as c FROM domains').get().c;
+    const totalShares = db.prepare('SELECT COUNT(*) as c FROM shares').get().c;
+    const aiUsage = db.prepare('SELECT COUNT(*) as count, SUM(tokens_used) as tokens, SUM(cost_estimate) as cost FROM ai_usage').get();
+    const recentUsers = db.prepare('SELECT id, name, email, role, created_at, last_login FROM users ORDER BY created_at DESC LIMIT 5').all();
+    res.json({ totalUsers, totalQuizzes, totalLeads, totalDomains, totalShares, aiUsage: { count: aiUsage.count || 0, tokens: aiUsage.tokens || 0, cost: aiUsage.cost || 0 }, recentUsers });
+});
+
+app.get('/api/admin/users', requireAdmin, (req, res) => {
+    const users = db.prepare('SELECT id, name, email, role, created_at, last_login FROM users ORDER BY created_at DESC').all();
+    res.json(users);
+});
+
+app.put('/api/admin/users/:id', requireAdmin, (req, res) => {
+    const { role, name } = req.body;
+    if (role) db.prepare('UPDATE users SET role = ? WHERE id = ?').run(role, req.params.id);
+    if (name) db.prepare('UPDATE users SET name = ? WHERE id = ?').run(name, req.params.id);
+    res.json({ ok: true });
+});
+
+app.delete('/api/admin/users/:id', requireAdmin, (req, res) => {
+    if (Number(req.params.id) === req.user.id) return res.status(400).json({ error: 'Não pode deletar a si mesmo' });
+    db.prepare('DELETE FROM users WHERE id = ?').run(req.params.id);
+    res.json({ ok: true });
+});
+
+app.get('/api/admin/ai-usage', requireAdmin, (req, res) => {
+    const rows = db.prepare('SELECT au.*, u.name as user_name, u.email as user_email FROM ai_usage au LEFT JOIN users u ON au.user_id = u.id ORDER BY au.created_at DESC LIMIT 100').all();
+    res.json(rows);
+});
+
+// ── Custom Domain Resolution Middleware ──
+// Checks if the incoming Host header matches a verified custom domain
+app.use((req, res, next) => {
+    // Skip API routes and uploads
+    if (req.path.startsWith('/api/') || req.path.startsWith('/uploads/')) return next();
+
+    const host = (req.headers.host || '').split(':')[0].toLowerCase();
+    // Skip localhost and known app domains
+    if (!host || host === 'localhost' || host === '127.0.0.1') return next();
+
+    const domainRow = db.prepare('SELECT quiz_id, status FROM domains WHERE domain = ?').get(host);
+    if (domainRow && domainRow.status === 'verified') {
+        // Inject quizId so the SPA can load the right quiz
+        req.customDomainQuizId = domainRow.quiz_id;
+        // For SPA: serve index.html with quiz context
+        if (!req.path.startsWith('/assets/') && !req.path.match(/\.[a-z]{2,4}$/i)) {
+            // Rewrite to serve the player page
+            req.url = `/q/${domainRow.quiz_id}${req.url === '/' ? '' : req.url}`;
+        }
+    }
+    next();
+});
 
 // Serve uploaded images
 const uploadsDir = path.join(__dirname, 'uploads');
@@ -107,6 +267,97 @@ app.delete('/api/quizzes', (req, res) => {
     res.json({ ok: true });
 });
 
+// ── Custom Domains ──
+app.get('/api/domains/:quizId', (req, res) => {
+    const rows = db.prepare('SELECT id, quiz_id, domain, status, verified_at, created_at FROM domains WHERE quiz_id = ? ORDER BY created_at DESC').all(req.params.quizId);
+    res.json(rows);
+});
+
+// All domains across all quizzes
+app.get('/api/domains-all', (req, res) => {
+    const rows = db.prepare(`
+        SELECT d.id, d.quiz_id, d.domain, d.status, d.verified_at, d.created_at, q.data as quiz_data
+        FROM domains d LEFT JOIN quizzes q ON d.quiz_id = q.id
+        ORDER BY d.created_at DESC
+    `).all();
+    res.json(rows.map(r => {
+        let quizName = 'Quiz removido';
+        try { quizName = JSON.parse(r.quiz_data)?.name || 'Sem título'; } catch { }
+        return { id: r.id, quiz_id: r.quiz_id, domain: r.domain, status: r.status, verified_at: r.verified_at, created_at: r.created_at, quizName };
+    }));
+});
+
+app.post('/api/domains', (req, res) => {
+    const { quizId, domain } = req.body;
+    if (!quizId || !domain) return res.status(400).json({ error: 'quizId e domain são obrigatórios' });
+
+    // Normalize domain
+    const cleanDomain = domain.toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, '').trim();
+    if (!cleanDomain || cleanDomain.length < 3) return res.status(400).json({ error: 'Domínio inválido' });
+
+    // Check if domain already exists
+    const existing = db.prepare('SELECT id FROM domains WHERE domain = ?').get(cleanDomain);
+    if (existing) return res.status(409).json({ error: 'Este domínio já está em uso' });
+
+    // Check if quiz exists
+    const quiz = db.prepare('SELECT id FROM quizzes WHERE id = ?').get(quizId);
+    if (!quiz) return res.status(404).json({ error: 'Quiz não encontrado' });
+
+    const result = db.prepare('INSERT INTO domains (quiz_id, domain) VALUES (?, ?)').run(quizId, cleanDomain);
+    res.json({ id: result.lastInsertRowid, quiz_id: quizId, domain: cleanDomain, status: 'pending', serverHostname: SERVER_HOSTNAME });
+});
+
+app.delete('/api/domains/:id', (req, res) => {
+    db.prepare('DELETE FROM domains WHERE id = ?').run(req.params.id);
+    res.json({ ok: true });
+});
+
+app.post('/api/domains/:id/verify', async (req, res) => {
+    const row = db.prepare('SELECT * FROM domains WHERE id = ?').get(req.params.id);
+    if (!row) return res.status(404).json({ error: 'Domínio não encontrado' });
+
+    try {
+        // Check CNAME records
+        const records = await dns.promises.resolveCname(row.domain).catch(() => []);
+        const serverHost = SERVER_HOSTNAME.split(':')[0].toLowerCase();
+        const verified = records.some(r => r.toLowerCase().includes(serverHost));
+
+        // Also check A/AAAA records as fallback (some DNS configs use A records)
+        let aVerified = false;
+        if (!verified) {
+            try {
+                const aRecords = await dns.promises.resolve4(row.domain).catch(() => []);
+                // If domain resolves at all, consider it potentially valid
+                aVerified = aRecords.length > 0;
+            } catch (e) { /* ignore */ }
+        }
+
+        const isVerified = verified || aVerified;
+        const status = isVerified ? 'verified' : 'error';
+        const now = isVerified ? Date.now() : null;
+
+        db.prepare('UPDATE domains SET status = ?, verified_at = ? WHERE id = ?').run(status, now, row.id);
+
+        res.json({
+            id: row.id,
+            domain: row.domain,
+            status,
+            verified_at: now,
+            cnameRecords: records,
+            message: isVerified
+                ? `✅ Domínio ${row.domain} verificado com sucesso!`
+                : `❌ CNAME não encontrado. Crie um registro CNAME apontando ${row.domain} para ${SERVER_HOSTNAME}`,
+        });
+    } catch (err) {
+        db.prepare('UPDATE domains SET status = ? WHERE id = ?').run('error', row.id);
+        res.json({ id: row.id, domain: row.domain, status: 'error', message: `Erro ao verificar DNS: ${err.message}` });
+    }
+});
+
+app.get('/api/server-info', (req, res) => {
+    res.json({ hostname: SERVER_HOSTNAME });
+});
+
 // ── Leads ──
 app.post('/api/leads', (req, res) => {
     const { quizId, ...leadData } = req.body;
@@ -135,6 +386,37 @@ app.get('/api/analytics/:quizId', (req, res) => {
     const answers = events.filter(e => e.event === 'answer');
 
     res.json({ starts, completes, conversionRate: starts ? Math.round(completes / starts * 100) : 0, events, answers });
+});
+
+// ── Shares / Collaboration ──
+app.post('/api/shares', (req, res) => {
+    const { quizId, sharedWith, role = 'editor' } = req.body;
+    if (!quizId || !sharedWith) return res.status(400).json({ error: 'quizId e sharedWith obrigatórios' });
+    try {
+        db.prepare('INSERT OR REPLACE INTO shares (quiz_id, shared_with, role) VALUES (?, ?, ?)').run(quizId, sharedWith.toLowerCase(), role);
+        res.json({ ok: true });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/shares/:quizId', (req, res) => {
+    const rows = db.prepare('SELECT id, shared_with, role, created_at FROM shares WHERE quiz_id = ? ORDER BY created_at DESC').all(req.params.quizId);
+    res.json(rows.map(r => ({ ...r, date: new Date(r.created_at).toISOString() })));
+});
+
+app.delete('/api/shares/:id', (req, res) => {
+    db.prepare('DELETE FROM shares WHERE id = ?').run(req.params.id);
+    res.json({ ok: true });
+});
+
+app.get('/api/shared-quizzes/:email', (req, res) => {
+    const shares = db.prepare('SELECT quiz_id, role FROM shares WHERE shared_with = ?').all(req.params.email.toLowerCase());
+    const quizzes = shares.map(s => {
+        const row = db.prepare('SELECT data FROM quizzes WHERE id = ?').get(s.quiz_id);
+        if (!row) return null;
+        const quiz = JSON.parse(row.data);
+        return { ...quiz, _sharedRole: s.role };
+    }).filter(Boolean);
+    res.json(quizzes);
 });
 
 // ── AI Quiz Generation ──
@@ -180,13 +462,173 @@ async function callOpenAI(prompt, { system = '', temperature = 0.7, maxTokens = 
     catch (e) { console.error('[AI] Parse error:', cleaned.slice(0, 500)); throw new Error('AI retornou formato inválido'); }
 }
 
+// ── Clone from Screenshots (GPT-4o Vision) ──
+
+app.post('/api/clone-screenshots', upload.array('screenshots', 30), async (req, res) => {
+    if (!OPENAI_KEY) return res.status(400).json({ error: 'VITE_OPENAI_API_KEY não configurada no .env' });
+    const files = req.files;
+    if (!files || files.length === 0) return res.status(400).json({ error: 'Nenhuma imagem enviada' });
+
+    console.log(`[CloneScreenshots] Processing ${files.length} screenshots...`);
+
+    try {
+        const pages = [];
+        for (let i = 0; i < files.length; i++) {
+            console.log(`[CloneScreenshots] Analyzing image ${i + 1}/${files.length}: ${files[i].originalname}`);
+
+            const imageBuffer = fs.readFileSync(files[i].path);
+            const base64 = imageBuffer.toString('base64');
+            const mimeType = files[i].mimetype || 'image/png';
+
+            const visionRes = await fetch(OPENAI_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${OPENAI_KEY}` },
+                body: JSON.stringify({
+                    model: 'gpt-4o',
+                    messages: [
+                        {
+                            role: 'system',
+                            content: `Você é um especialista em análise de quizzes/funnels de marketing. Analise o screenshot de uma etapa de quiz e extraia a estrutura em JSON.
+
+Retorne SEMPRE um JSON com esta estrutura:
+{
+  "type": "choice" | "multi-select" | "statement" | "insight" | "lead" | "result" | "welcome",
+  "text": "Texto principal da pergunta ou mensagem",
+  "subtitle": "Subtítulo ou descrição adicional (se houver)",
+  "options": [{"text": "Opção 1", "emoji": "🔥"}, {"text": "Opção 2", "emoji": ""}],
+  "buttonText": "Texto do botão de ação (se houver, ex: Continuar, Próximo)",
+  "hasImages": false,
+  "pageDescription": "Breve descrição do que esta página faz"
+}
+
+Regras:
+- Se a página mostra uma pergunta com várias opções clicáveis → type "choice"
+- Se a página tem checkboxes/seleção múltipla → type "multi-select"
+- Se a página mostra apenas texto informativo com botão Continuar → type "insight" ou "statement"
+- Se pede email/nome/telefone → type "lead"
+- Se mostra resultado/diagnóstico → type "result"
+- Se é página inicial com botão começar → type "welcome"
+- Extraia o texto EXATO das opções como aparecem na tela
+- Inclua emojis se visíveis nas opções
+- Se não há opções, retorne array vazio []`
+                        },
+                        {
+                            role: 'user',
+                            content: [
+                                { type: 'text', text: `Analise este screenshot (etapa ${i + 1} de ${files.length} do quiz) e extraia a estrutura:` },
+                                { type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64}`, detail: 'high' } }
+                            ]
+                        }
+                    ],
+                    temperature: 0.3,
+                    max_tokens: 1000,
+                    response_format: { type: 'json_object' }
+                }),
+            });
+
+            if (!visionRes.ok) {
+                const err = await visionRes.json().catch(() => ({}));
+                console.error(`[CloneScreenshots] Vision error for image ${i + 1}:`, err);
+                pages.push({ type: 'insight', text: `(Erro ao analisar screenshot ${i + 1})`, options: [], _error: true });
+                continue;
+            }
+
+            const visionData = await visionRes.json();
+            const content = visionData.choices?.[0]?.message?.content || '';
+            try {
+                let cleaned = content.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+                const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
+                if (jsonMatch) cleaned = jsonMatch[0];
+                const page = JSON.parse(cleaned);
+                pages.push(page);
+                console.log(`[CloneScreenshots] ✅ Image ${i + 1}: type=${page.type}, text="${(page.text || '').slice(0, 40)}..."`);
+            } catch (e) {
+                console.error(`[CloneScreenshots] Parse error for image ${i + 1}:`, content.slice(0, 200));
+                pages.push({ type: 'insight', text: `(Erro ao processar screenshot ${i + 1})`, options: [], _error: true });
+            }
+
+            // Clean up temp file
+            try { fs.unlinkSync(files[i].path); } catch { }
+        }
+
+        console.log(`[CloneScreenshots] Done! ${pages.length} pages extracted`);
+        res.json({ pages, total: pages.length });
+
+    } catch (err) {
+        console.error('[CloneScreenshots] Error:', err.message);
+        // Clean up temp files
+        for (const f of files) { try { fs.unlinkSync(f.path); } catch { } }
+        res.status(500).json({ error: err.message || 'Erro ao processar screenshots' });
+    }
+});
+
+// ── Generate contextual step with AI ──
+
+app.post('/api/generate-step', async (req, res) => {
+    if (!OPENAI_KEY) return res.status(400).json({ error: 'VITE_OPENAI_API_KEY não configurada' });
+    const { existingSteps = [], productName = 'Quiz', niche = 'outro', totalSteps = 0, productDescription = '', targetAudience = '' } = req.body;
+
+    try {
+        const stepsContext = existingSteps.length > 0
+            ? existingSteps.map(s => `Etapa ${s.step} "${s.name}": ${s.blocks.map(b => `[${b.type}] ${b.text} ${b.options?.length ? `(opções: ${b.options.join(', ')})` : ''}`).join('; ')}`).join('\n')
+            : 'Nenhuma etapa existente ainda.';
+
+        const productContext = productDescription ? `\nDescrição do produto: ${productDescription}` : '';
+        const audienceContext = targetAudience ? `\nPúblico-alvo: ${targetAudience}` : '';
+
+        const result = await callOpenAI(`Você está criando um quiz/funnel de marketing.
+Produto/Quiz: "${productName}"
+Nicho: ${niche}${productContext}${audienceContext}
+Total de etapas atuais: ${totalSteps}
+
+Etapas existentes:
+${stepsContext}
+
+Crie a PRÓXIMA etapa que faça sentido na sequência. Analise o que já existe e crie algo complementar.
+
+Retorne JSON:
+{
+  "step": {
+    "name": "Nome curto da etapa (max 25 chars)",
+    "blocks": [{
+      "type": "choice|insight|lead|number-input|welcome",
+      "text": "Texto da pergunta ou mensagem",
+      "headline": "(se welcome) Título",
+      "subtitle": "(se welcome ou insight) Subtítulo",
+      "cta": "(se welcome ou insight) Texto do botão",
+      "options": [{"text": "Opção 1", "emoji": "🔥", "weight": 1}],
+      "placeholder": "(se input) Placeholder",
+      "unit": "(se number-input) Unidade (kg, cm, etc)"
+    }]
+  }
+}
+
+Regras:
+- NÃO repita tipos de etapa que já existem (se já tem choice de idade, não crie outra de idade)
+- Varie entre: choice (perguntas), insight (dica/informação), lead (captura email/nome), number-input
+- Use emojis relevantes nas opções
+- O texto deve ser envolvente e em português
+- Adapte o conteúdo ao produto e público-alvo fornecidos
+- Se não há etapas, comece com uma welcome page`, {
+            system: 'Você é especialista em criar quizzes de marketing de alta conversão em português.',
+            temperature: 0.8,
+            maxTokens: 1000,
+        });
+
+        res.json(result);
+    } catch (err) {
+        console.error('[GenerateStep] Error:', err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 app.post('/api/generate-quiz', async (req, res) => {
-    const { productName, productDescription, niche, questionCount = 10 } = req.body;
+    const { productName, productDescription, niche, questionCount = 10, useConditionals = false } = req.body;
     if (!productName) return res.status(400).json({ error: 'Nome do produto obrigatório' });
     if (!OPENAI_KEY) return res.status(400).json({ error: 'VITE_OPENAI_API_KEY não configurada no .env' });
 
     try {
-        console.log(`[AI] Gerando quiz para "${productName}" (${niche}, ${questionCount} perguntas)...`);
+        console.log(`[AI] Gerando quiz para "${productName}" (${niche}, ${questionCount} perguntas, conditionals: ${useConditionals})...`);
 
         // STEP 1: Analyze product
         const metadata = await callOpenAI(`Analise este produto e retorne JSON:
@@ -243,7 +685,36 @@ REGRAS:
 - 3 resultados que cubram 0-100% sem gaps
 - Perguntas específicas ao sub-tema "${metadata.subTheme || productName}", nunca genéricas
 - Tudo em português brasileiro
-- Retorne SOMENTE o JSON`, {
+- Retorne SOMENTE o JSON
+${useConditionals ? `
+FLUXO CONDICIONAL — OBRIGATÓRIO, SIGA ESTE EXEMPLO EXATO:
+
+A segunda ou terceira página DEVE ser uma pergunta de ramificação. Depois dela, crie páginas específicas para cada ramo.
+Cada página de ramo DEVE ter "stepGoToName" apontando para a página de convergência (onde os ramos se encontram).
+
+EXEMPLO CONCRETO (siga este padrão):
+"pages": [
+  {"type": "choice", "text": "Qual seu principal objetivo?", "options": [
+    {"text": "Emagrecer", "emoji": "🏃", "weight": 1},
+    {"text": "Ganhar massa", "emoji": "💪", "weight": 2}
+  ]},
+  {"type": "choice", "text": "Qual seu sexo biológico?", "options": [
+    {"text": "Masculino", "emoji": "👨", "weight": 1, "goToStepName": "Rotina Masculina"},
+    {"text": "Feminino", "emoji": "👩", "weight": 1, "goToStepName": "Rotina Feminina"}
+  ]},
+  {"type": "insight", "title": "Rotina Masculina", "body": "Dica específica para homens...", "stepGoToName": "Sua Alimentação"},
+  {"type": "insight", "title": "Rotina Feminina", "body": "Dica específica para mulheres...", "stepGoToName": "Sua Alimentação"},
+  {"type": "choice", "text": "Sua Alimentação", "options": [...]},
+  ... resto do quiz normal ...
+]
+
+REGRAS CONDICIONAIS:
+- O "title"/"text" da página é o nome que "goToStepName" e "stepGoToName" referenciam — devem ser IDÊNTICOS
+- goToStepName vai DENTRO de cada opção da pergunta de ramificação
+- stepGoToName vai na RAIZ da página de ramo (mesmo nível que "type")
+- Crie 2-3 páginas por ramo antes de convergir
+- O fluxo SEMPRE deve convergir (voltar a um ponto comum via stepGoToName)
+- Use ramificações relevantes ao produto: gênero, nível, objetivo, faixa etária` : ''}`, {
             system: 'Você é um especialista em quiz funnels de alta conversão. Crie quizzes envolventes e personalizados.',
             temperature: 0.75,
             maxTokens: 5000
@@ -274,19 +745,50 @@ REGRAS:
         if (quizContent.pages?.length) {
             quizContent.pages.forEach((page, i) => {
                 const block = { ...page };
+                const stepGoToName = block.stepGoToName; delete block.stepGoToName;
+                delete block.branch;
                 if (block.options && Array.isArray(block.options)) {
                     block.options = block.options.map(opt => {
                         if (typeof opt === 'string') return { text: opt, emoji: '', weight: 1 };
-                        return { text: opt.text || '', emoji: opt.emoji || '', weight: opt.weight || 1, ...(opt.value !== undefined ? { value: opt.value } : {}) };
+                        const cleaned = { text: opt.text || '', emoji: opt.emoji || '', weight: opt.weight || 1, ...(opt.value !== undefined ? { value: opt.value } : {}) };
+                        if (opt.goToStepName) cleaned._goToStepName = opt.goToStepName;
+                        return cleaned;
                     });
                 }
                 if (block.type === 'choice') block.optionLayout = block.optionLayout || 'list';
-                steps.push({
+                const stepObj = {
                     id: `stp_${Date.now()}_${i}`,
                     name: block.text || block.title || block.headline || `Etapa ${i + 1}`,
                     blocks: [block],
+                };
+                if (stepGoToName) stepObj._goToStepName = stepGoToName;
+                steps.push(stepObj);
+            });
+        }
+
+        // Resolve conditional routing references (goToStepName → goToStep ID)
+        if (useConditionals) {
+            const nameToId = {};
+            steps.forEach(s => { nameToId[s.name] = s.id; });
+            steps.forEach(step => {
+                if (step._goToStepName) {
+                    const targetId = nameToId[step._goToStepName];
+                    if (targetId) step.goToStep = targetId;
+                    delete step._goToStepName;
+                }
+                step.blocks.forEach(block => {
+                    if (block.options) {
+                        block.options.forEach(opt => {
+                            if (opt._goToStepName) {
+                                const targetId = nameToId[opt._goToStepName];
+                                if (targetId) opt.goToStep = targetId;
+                                delete opt._goToStepName;
+                            }
+                        });
+                    }
                 });
             });
+            console.log('[AI] Conditional routing resolved ✅');
         }
 
         // Extract questions for Player compatibility
@@ -298,6 +800,11 @@ REGRAS:
                 return q;
             });
 
+        // Build stepPageMap and stepGoToMap
+        const stepPageMap = {};
+        const stepGoToMap = {};
+        steps.forEach((s, i) => { stepPageMap[s.id] = i; if (s.goToStep) stepGoToMap[i] = s.goToStep; });
+
         const result = {
             id: quizId,
             name: `Quiz: ${productName}`,
@@ -306,6 +813,8 @@ REGRAS:
             niche: niche,
             welcome: quizContent.welcome,
             steps,
+            stepPageMap,
+            stepGoToMap,
             pages: quizContent.pages || [],
             questions,
             results: quizContent.results || [],
@@ -314,11 +823,304 @@ REGRAS:
             updatedAt: Date.now(),
         };
 
-        console.log(`[AI] Step 3/3 ✅ Quiz "${productName}" gerado: ${steps.length} steps, ${questions.length} questions`);
+        console.log(`[AI] Step 3/3 ✅ Quiz "${productName}" gerado: ${steps.length} steps, ${questions.length} questions${useConditionals ? ', with conditionals' : ''}`);
         res.json(result);
     } catch (err) {
         console.error('[AI] ❌ Erro:', err.message);
         res.status(500).json({ error: err.message });
+    }
+});
+
+// ── Quiz Clone SSE (real-time progress) ──
+
+app.get('/api/clone-stream', async (req, res) => {
+    const url = req.query.url;
+    if (!url) return res.status(400).json({ error: 'URL obrigatória' });
+
+    // SSE headers
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.flushHeaders();
+
+    const send = (type, data) => {
+        res.write(`data: ${JSON.stringify({ type, ...data })}\n\n`);
+    };
+
+    let browser;
+    try {
+        send('progress', { stage: 'connecting', msg: '🌐 Conectando ao servidor...', pct: 5 });
+
+        const puppeteer = require('puppeteer');
+        browser = await puppeteer.launch({
+            headless: 'new',
+            args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-web-security'],
+        });
+        const pg = await browser.newPage();
+        const delay = ms => new Promise(r => setTimeout(r, ms));
+        await pg.setViewport({ width: 430, height: 932 });
+        await pg.setUserAgent('Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1');
+
+        send('progress', { stage: 'scraping', msg: '🔍 Abrindo quiz no navegador...', pct: 10 });
+
+        await pg.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
+        await delay(3000);
+
+        // Dismiss popups
+        await pg.evaluate(() => {
+            const p = /accept|aceitar|ok|got it|entendi|fechar|close|dismiss|consent/i;
+            document.querySelectorAll('button,a,[role="button"]').forEach(el => {
+                const t = (el.innerText || '').trim();
+                if (t.length < 30 && p.test(t)) { const r = el.getBoundingClientRect(); if (r.height > 0 && r.width > 0) el.click(); }
+            });
+        });
+        await delay(1000);
+
+        send('progress', { stage: 'scraping', msg: '🔍 Quiz carregado. Extraindo páginas...', pct: 15 });
+
+        // ── Reuse the same scrape logic as /api/clone-quiz ──
+        const MAX_PAGES = 30;
+        const MAX_STUCK = 3;
+        let allPages = [], welcomeData = null, collectLead = false;
+        let prevHash = '', stuckCount = 0;
+
+        const getContentHash = async () => pg.evaluate(() => {
+            const main = document.querySelector('main, [role="main"], .main-content, #app, #root, #__next') || document.body;
+            return (main.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 500);
+        });
+
+        const extractScreen = async () => pg.evaluate(() => {
+            const allEls = [...document.querySelectorAll('h1,h2,h3,h4,h5,p,span,label,li,td,th,div')].filter(el => {
+                const r = el.getBoundingClientRect();
+                if (r.height <= 0 || r.width <= 0) return false;
+                const t = (el.innerText || '').trim();
+                return t.length > 0 && t.length < 500 && el.children.length < 3;
+            });
+            const texts = [...new Set(allEls.map(el => (el.innerText || '').trim()))].filter(t => t.length > 1 && t.length < 500);
+
+            const clickables = [];
+            const seen = new Set();
+            for (const el of document.querySelectorAll('button, a, [role="button"], [onclick], label, div, span, li')) {
+                const r = el.getBoundingClientRect();
+                if (r.height <= 5 || r.width <= 5 || r.height > 200) continue;
+                const text = (el.innerText || '').trim();
+                if (!text || text.length === 0 || text.length > 300) continue;
+                const isNav = /voltar|back|prev|skip|pular|anterior|logo|cookie|privacy|privacidade|termos|fechar|close|sign.?up|sign.?in|log.?in|register|pricing|features|blog|about|contact|home|faq|pol[ií]tica|inlead|central de an[úu]ncios|criado via|© \d{4}/i.test(text);
+                if (isNav) continue;
+                const isSubmit = /^(próximo|next|continuar|continue|começar|start|enviar|submit|avançar|advance|ok|prosseguir|ver resultado|iniciar|vamos lá|quero|bora|let'?s go|take the quiz|get started|take quiz|start quiz)$/i.test(text.replace(/[→►▶\s]/g, '').trim());
+                const style = getComputedStyle(el);
+                const isPointer = style.cursor === 'pointer';
+                const tag = el.tagName.toLowerCase();
+                const isClickable = tag === 'button' || tag === 'a' || el.getAttribute('role') === 'button' || isPointer;
+                if (text.length > 2 && text.length < 200 && !seen.has(text) && (isClickable || isSubmit)) {
+                    seen.add(text);
+                    clickables.push({ text, isSubmit, tag, x: r.x + r.width / 2, y: r.y + r.height / 2, w: r.width, h: r.height });
+                }
+            }
+
+            const inputs = [...document.querySelectorAll('input:not([type="hidden"]),textarea,select')].filter(el => {
+                const r = el.getBoundingClientRect(); return r.height > 0 && r.width > 0;
+            }).map(el => ({ type: el.type || el.tagName.toLowerCase(), name: el.name || el.placeholder || '', label: el.labels?.[0]?.innerText || '' }));
+
+            const images = [...document.querySelectorAll('img')].filter(el => {
+                const r = el.getBoundingClientRect(); return r.height > 40 && r.width > 40;
+            }).map(el => el.src).filter(s => s && !s.includes('data:'));
+
+            return { texts, clickables, inputs, images };
+        });
+
+        const classifyPage = (screen) => {
+            const { clickables, inputs, texts } = screen;
+            const options = clickables.filter(c => !c.isSubmit);
+            const allText = texts.join(' ').toLowerCase();
+            if (allText.match(/bem.?vind|welcome|vamos começar|start|iniciar/i) && options.length <= 1) return 'welcome';
+            if (inputs.some(i => i.type === 'email' || i.name.match(/email|nome|name|phone|telefone|whatsapp/i))) return 'lead';
+            if (inputs.length > 0) return 'input';
+            if (options.length > 1) return 'choice';
+            if (options.length === 1) return 'statement';
+            return 'insight';
+        };
+
+        const buildPage = (screen, type) => {
+            const options = screen.clickables.filter(c => !c.isSubmit);
+            const mainText = screen.texts.filter(t => t.length > 3 && t.length < 300).slice(0, 3).join('\n');
+            if (type === 'welcome') return { headline: screen.texts[0] || '', subheadline: screen.texts[1] || '', cta: screen.clickables.find(c => c.isSubmit)?.text || 'Começar →' };
+            return { type, text: mainText, options: options.map((o, j) => ({ text: o.text, emoji: '', image: '', weight: j + 1 })), images: screen.images?.slice(0, 2) || [] };
+        };
+
+        const clickAndWait = async (clickable) => {
+            try {
+                // Use JavaScript dispatchEvent for SPA frameworks (React/Next.js)
+                // which don't respond to native Puppeteer mouse events
+                await pg.evaluate(({ x, y }) => {
+                    const el = document.elementFromPoint(x, y);
+                    if (!el) return;
+                    // Walk up to find the closest button/clickable
+                    let target = el;
+                    for (let i = 0; i < 5; i++) {
+                        if (target.tagName === 'BUTTON' || target.tagName === 'A' || target.getAttribute('role') === 'button') break;
+                        if (target.parentElement) target = target.parentElement;
+                    }
+                    const opts = { bubbles: true, cancelable: true, clientX: x, clientY: y, view: window };
+                    ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'].forEach(type => {
+                        target.dispatchEvent(new MouseEvent(type, opts));
+                    });
+                }, { x: clickable.x, y: clickable.y });
+                await delay(2500);
+                const newHash = await getContentHash();
+                if (newHash !== prevHash) return true;
+                // Fallback: try Puppeteer native click
+                await pg.mouse.click(clickable.x, clickable.y);
+                await delay(2000);
+                const newHash2 = await getContentHash();
+                return newHash2 !== prevHash;
+            } catch { return false; }
+        };
+
+        for (let i = 0; i < MAX_PAGES; i++) {
+            await delay(500);
+            const screen = await extractScreen();
+            const options = screen.clickables.filter(c => !c.isSubmit);
+            const submitBtns = screen.clickables.filter(c => c.isSubmit);
+
+            const hash = await getContentHash();
+            if (hash === prevHash) {
+                stuckCount++;
+                if (stuckCount >= MAX_STUCK) { send('progress', { stage: 'done', msg: `⛔ Quiz travou após ${allPages.length} páginas`, pct: 90 }); break; }
+            } else { stuckCount = 0; }
+            prevHash = hash;
+
+            const type = classifyPage(screen);
+
+            const pageHash = hash;
+            const isDuplicate = allPages.some(p => p._hash === pageHash);
+            if (isDuplicate) {
+                // skip
+            } else if (type === 'welcome') {
+                welcomeData = buildPage(screen, type);
+                send('progress', { stage: 'scraping', msg: `📄 Página de boas-vindas detectada`, pct: 15 + i * 3, pageNum: i + 1, pageType: 'welcome', pageText: (welcomeData.headline || '').slice(0, 50) });
+            } else if (type === 'lead') {
+                collectLead = true;
+                send('progress', { stage: 'scraping', msg: `📧 Formulário de captura detectado`, pct: 15 + i * 3, pageNum: i + 1, pageType: 'lead' });
+            } else if (type !== 'input') {
+                const pageObj = buildPage(screen, type);
+                if (pageObj) {
+                    pageObj._hash = pageHash;
+                    allPages.push(pageObj);
+                    const preview = (pageObj.text || '').replace(/\n/g, ' ').slice(0, 50);
+                    send('progress', { stage: 'scraping', msg: `✅ Página ${allPages.length} clonada — "${preview}..."`, pct: Math.min(85, 15 + allPages.length * 5), pageNum: i + 1, pageType: type, pageText: preview, totalPages: allPages.length });
+                }
+            }
+
+            // ── Advance strategies (improved for multi-page quizzes) ──
+            let advanced = false;
+
+            // Helper: scroll down and re-extract to find buttons below viewport
+            const scrollAndExtract = async () => {
+                await pg.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+                await delay(500);
+                return extractScreen();
+            };
+
+            // Helper: find submit/continue buttons (broader matching)
+            const findSubmits = (scr) => {
+                const submitPattern = /continuar|continue|próximo|next|começar|start|enviar|submit|avançar|advance|prosseguir|ver resultado|iniciar|vamos lá|quero|bora|let'?s go|take the quiz|get started|take quiz|start quiz/i;
+                return scr.clickables.filter(c => c.isSubmit || submitPattern.test(c.text.replace(/[→►▶\s]/g, '').trim()));
+            };
+
+            if (options.length === 0) {
+                // ── INFO PAGE (no options, just a submit/continue button) ──
+                const allSubmits = findSubmits(screen);
+                if (allSubmits.length > 0) {
+                    for (const btn of allSubmits) {
+                        advanced = await clickAndWait(btn);
+                        if (advanced) break;
+                    }
+                }
+                // Try after scrolling down
+                if (!advanced) {
+                    const scrolled = await scrollAndExtract();
+                    const scrollSubmits = findSubmits(scrolled);
+                    for (const btn of scrollSubmits) {
+                        advanced = await clickAndWait(btn);
+                        if (advanced) break;
+                    }
+                }
+            } else {
+                // ── QUESTION PAGE (has options) ──
+                // Click first option
+                advanced = await clickAndWait(options[0]);
+
+                // If didn't auto-advance, maybe need to click "Continuar" that appeared after selecting
+                if (!advanced) {
+                    await delay(500);
+                    // Re-extract screen to find newly appeared/enabled buttons
+                    const newScreen = await extractScreen();
+                    const newSubmits = findSubmits(newScreen);
+                    if (newSubmits.length > 0) {
+                        for (const btn of newSubmits) {
+                            advanced = await clickAndWait(btn);
+                            if (advanced) break;
+                        }
+                    }
+                    // Try scrolling down to find Continuar below viewport
+                    if (!advanced) {
+                        const scrolled = await scrollAndExtract();
+                        const scrollSubmits = findSubmits(scrolled);
+                        for (const btn of scrollSubmits) {
+                            advanced = await clickAndWait(btn);
+                            if (advanced) break;
+                        }
+                    }
+                }
+            }
+
+            // Fallback: try any remaining clickable
+            if (!advanced) {
+                for (const c of screen.clickables) {
+                    if (options.includes(c) || findSubmits(screen).includes(c)) continue;
+                    advanced = await clickAndWait(c);
+                    if (advanced) break;
+                }
+            }
+
+            // Fallback: content-area click
+            if (!advanced) { try { await pg.mouse.click(215, 450); await delay(2000); if (await getContentHash() !== prevHash) advanced = true; } catch { } }
+            // Fallback: keyboard
+            if (!advanced) { for (const key of ['Enter', 'Space', 'ArrowRight']) { try { await pg.keyboard.press(key); await delay(1500); if (await getContentHash() !== prevHash) { advanced = true; break; } } catch { } } }
+
+            if (!advanced) {
+                send('progress', { stage: 'done', msg: `⛔ Não foi possível avançar. ${allPages.length} páginas clonadas.`, pct: 90 });
+                break;
+            }
+        }
+
+        await browser.close();
+        browser = null;
+
+        const quizResult = {
+            quizName: welcomeData?.headline || 'Quiz Clonado',
+            niche: 'outro', primaryColor: '#2563eb',
+            welcome: welcomeData || { headline: 'Quiz Clonado', subheadline: '', cta: 'Começar →' },
+            pages: allPages.map(p => { delete p._hash; return p; }),
+            results: [
+                { id: 'r1', name: 'Resultado A', description: 'Seu perfil indica...', cta: 'Ver recomendação →', minPct: 0, maxPct: 50 },
+                { id: 'r2', name: 'Resultado B', description: 'Seu perfil indica...', cta: 'Ver recomendação →', minPct: 51, maxPct: 100 },
+            ],
+            collectLead,
+        };
+
+        send('progress', { stage: 'building', msg: `🧱 Montando quiz com ${allPages.length} páginas...`, pct: 95 });
+        send('result', { quiz: quizResult });
+        send('progress', { stage: 'complete', msg: `✅ ${allPages.length} páginas clonadas com sucesso!`, pct: 100 });
+        res.end();
+
+    } catch (err) {
+        console.error('[Clone-Stream] Error:', err.message);
+        if (browser) try { await browser.close(); } catch { }
+        send('error', { error: err.message || 'Erro ao clonar' });
+        res.end();
     }
 });
 
@@ -502,7 +1304,7 @@ app.post('/api/clone-quiz', async (req, res) => {
                     if (!text || text.length === 0 || text.length > 300) continue;
 
                     // Classify this clickable
-                    const isNav = /voltar|back|prev|skip|pular|anterior|logo|cookie|privacy|privacidade|termos|assinatura|fechar|close|sign.?up|sign.?in|log.?in|register|pricing|features|blog|about|contact|home|faq|pol[ií]tica/i.test(text);
+                    const isNav = /voltar|back|prev|skip|pular|anterior|logo|cookie|privacy|privacidade|termos|assinatura|fechar|close|sign.?up|sign.?in|log.?in|register|pricing|features|blog|about|contact|home|faq|pol[ií]tica|inlead|central de an[úu]ncios|criado via|© \d{4}/i.test(text);
                     const isSubmit = /^(próximo|next|continuar|continue|começar|start|enviar|submit|avançar|advance|ok|prosseguir|ver resultado|iniciar|vamos lá|quero|bora|let'?s go|take the quiz|get started|take quiz|start quiz)$/i.test(text.replace(/[→►▶\s]/g, '').trim());
 
                     if (isNav) continue;
@@ -760,14 +1562,18 @@ app.post('/api/clone-quiz', async (req, res) => {
             const type = classifyPage(screen);
             console.log(`[Clone]   → type: ${type}`);
 
-            // Build page
-            if (type === 'welcome') {
+            // Build page (skip duplicates)
+            const pageHash = hash;
+            const isDuplicate = allPages.some(p => p._hash === pageHash);
+            if (isDuplicate) {
+                console.log(`[Clone]   ⚠ Duplicate page, skipping`);
+            } else if (type === 'welcome') {
                 welcomeData = buildPage(screen, type);
             } else if (type === 'lead') {
                 collectLead = true;
             } else if (type !== 'input') {
                 const pageObj = buildPage(screen, type);
-                if (pageObj) allPages.push(pageObj);
+                if (pageObj) { pageObj._hash = pageHash; allPages.push(pageObj); }
             }
 
             // ── Advance to next page ──
@@ -795,13 +1601,50 @@ app.post('/api/clone-quiz', async (req, res) => {
                 }
             }
 
-            // Strategy 4: Try keyboard (Enter, Space, ArrowRight)
+            // Strategy 4: Click center of main content area (for SPA quizzes like Inlead)
             if (!advanced) {
                 try {
-                    await pg.keyboard.press('Enter');
-                    await delay(1500);
+                    console.log(`[Clone]   Trying content-area click...`);
+                    await pg.mouse.click(215, 450);
+                    await delay(2000);
                     const h = await getContentHash();
-                    if (h !== prevHash) advanced = true;
+                    if (h !== prevHash) { advanced = true; console.log(`[Clone]   ✅ Content-area click worked`); }
+                } catch { }
+            }
+
+            // Strategy 5: Touch tap (mobile quizzes)
+            if (!advanced) {
+                try {
+                    await pg.touchscreen.tap(215, 450);
+                    await delay(2000);
+                    const h = await getContentHash();
+                    if (h !== prevHash) { advanced = true; console.log(`[Clone]   ✅ Touch tap worked`); }
+                } catch { }
+            }
+
+            // Strategy 6: Keyboard (Enter, Space, ArrowRight)
+            if (!advanced) {
+                for (const key of ['Enter', 'Space', 'ArrowRight']) {
+                    try {
+                        await pg.keyboard.press(key);
+                        await delay(1500);
+                        const h = await getContentHash();
+                        if (h !== prevHash) { advanced = true; console.log(`[Clone]   ✅ Key ${key} worked`); break; }
+                    } catch { }
+                }
+            }
+
+            // Strategy 7: Swipe up (some mobile quizzes use swipe navigation)
+            if (!advanced) {
+                try {
+                    await pg.touchscreen.touchStart(215, 600);
+                    await delay(100);
+                    await pg.touchscreen.touchMove(215, 200);
+                    await delay(100);
+                    await pg.touchscreen.touchEnd();
+                    await delay(2000);
+                    const h = await getContentHash();
+                    if (h !== prevHash) { advanced = true; console.log(`[Clone]   ✅ Swipe worked`); }
                 } catch { }
             }
 
@@ -837,6 +1680,202 @@ app.post('/api/clone-quiz', async (req, res) => {
         console.error('[Clone] ❌ Error:', err.message);
         if (browser) try { await browser.close(); } catch { }
         res.status(500).json({ error: err.message || 'Erro ao clonar quiz' });
+    }
+});
+
+// ── Clone + Optimize (AI-powered) ──
+app.post('/api/clone-optimize', async (req, res) => {
+    const { url, niche = 'outro', mode = 'clone_only', productDescription = '' } = req.body;
+    if (!url) return res.status(400).json({ error: 'URL obrigatória' });
+
+    const startTime = Date.now();
+    console.log(`[CloneOptimize] Starting: url=${url} niche=${niche} mode=${mode}`);
+
+    try {
+        // Step 1: Scrape via internal fetch to existing clone endpoint
+        const cloneRes = await fetch(`http://localhost:${PORT}/api/clone-quiz`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url }),
+        });
+
+        if (!cloneRes.ok) {
+            const err = await cloneRes.json().catch(() => ({}));
+            return res.status(500).json({ error: err.error || 'Falha na clonagem', partial: null });
+        }
+
+        const extracted = await cloneRes.json();
+        console.log(`[CloneOptimize] Scraped ${extracted.pages?.length || 0} pages in ${Date.now() - startTime}ms`);
+
+        // Mode: clone_only → return as-is
+        if (mode === 'clone_only') {
+            extracted.metadata = { ...(extracted.metadata || {}), cloneSource: url, optimizationMode: mode };
+            return res.json(extracted);
+        }
+
+        // Mode: clone_optimize or clone_adapt → send to AI
+        if (!OPENAI_KEY) {
+            console.warn('[CloneOptimize] No OpenAI key, returning unoptimized');
+            extracted.metadata = { ...(extracted.metadata || {}), cloneSource: url, optimizationMode: 'clone_only', warning: 'OpenAI não configurada' };
+            return res.json(extracted);
+        }
+
+        // Build the AI prompt
+        const stepsJson = JSON.stringify(extracted.pages?.map((p, i) => ({
+            step: i + 1,
+            question: p.text || p.title || p.headline || '',
+            type: p.type || 'choice',
+            options: (p.options || []).map(o => typeof o === 'string' ? o : o.text || ''),
+        })) || [], null, 2);
+
+        const nicheDescriptions = {
+            emagrecimento: 'perda de peso, dieta, exercícios, corpo ideal',
+            'saúde intestinal': 'intestino, digestão, microbioma, desconforto abdominal',
+            relacionamento: 'amor, parceiro, conexão emocional, autoestima afetiva',
+            finanças: 'dinheiro, investimentos, dívidas, liberdade financeira',
+            produtividade: 'foco, organização, tempo, performance, energia',
+            outro: 'genérico',
+        };
+
+        const nicheContext = nicheDescriptions[niche] || nicheDescriptions.outro;
+
+        let systemPrompt = `Você é um especialista em funis de conversão e quizzes low ticket.
+Nicho: ${niche} (${nicheContext})
+Tom: empático, específico, urgente mas não agressivo.`;
+
+        let userPrompt = `Analise este quiz extraído e otimize-o para máxima conversão.
+
+ESTRUTURA ATUAL:
+${stepsJson}
+
+REGRAS:
+1. Manter EXATAMENTE a mesma quantidade de etapas (${extracted.pages?.length || 0})
+2. Manter os mesmos tipos de interação
+3. Reescrever todas as perguntas para:
+   - Maior identificação pessoal
+   - Maior dor e urgência
+   - Maior clareza
+   - Maior curiosidade
+   - Maior comprometimento (micro-compromissos progressivos)
+4. Substituir perguntas genéricas por específicas:
+   Em vez de "Você sofre com isso?" → "Quantas vezes por semana você sente X mesmo tentando Y?"
+5. Vocabulário adaptado ao nicho: ${niche}
+6. Opções devem criar escala de comprometimento
+
+RESULTADO OTIMIZADO:
+- Parecer diagnóstico personalizado
+- Usar "com base nas suas respostas"
+- Incluir recomendação implícita
+- Promessa específica
+- Autoridade implícita
+- Transição suave para oferta`;
+
+        if (mode === 'clone_adapt' && productDescription) {
+            userPrompt += `\n\nPRODUTO DO USUÁRIO:\n${productDescription}\n\nAdapte TODAS as perguntas e o resultado para direcionar ao produto acima. A linguagem deve alinhar com os benefícios do produto.`;
+        }
+
+        userPrompt += `\n\nRetorne APENAS JSON válido:
+{
+  "optimized_steps": [
+    {
+      "question": "pergunta otimizada",
+      "type": "tipo original (choice/image-select/likert/etc)",
+      "options": ["opção 1", "opção 2", ...],
+      "psychological_role": "papel psicológico desta etapa"
+    }
+  ],
+  "optimized_result": {
+    "headline": "título do resultado",
+    "body": "corpo do resultado com 'com base nas suas respostas'",
+    "cta": "texto do botão CTA"
+  }
+}`;
+
+        console.log('[CloneOptimize] Sending to AI...');
+        const aiResult = await callOpenAI(userPrompt, {
+            system: systemPrompt,
+            temperature: 0.7,
+            maxTokens: 4000,
+        });
+
+        if (!aiResult) {
+            console.warn('[CloneOptimize] AI returned null, using original');
+            extracted.metadata = { ...(extracted.metadata || {}), cloneSource: url, optimizationMode: mode, warning: 'AI falhou, usando original' };
+            return res.json(extracted);
+        }
+
+        // Parse AI response
+        let optimized;
+        try {
+            const clean = aiResult.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+            optimized = JSON.parse(clean);
+        } catch (parseErr) {
+            console.error('[CloneOptimize] Failed to parse AI JSON:', parseErr.message);
+            extracted.metadata = { ...(extracted.metadata || {}), cloneSource: url, optimizationMode: mode, warning: 'AI retornou JSON inválido' };
+            return res.json(extracted);
+        }
+
+        // Merge optimized into extracted pages
+        if (optimized.optimized_steps && Array.isArray(optimized.optimized_steps)) {
+            const pages = extracted.pages || [];
+            for (let i = 0; i < Math.min(optimized.optimized_steps.length, pages.length); i++) {
+                const opt = optimized.optimized_steps[i];
+                if (opt.question) {
+                    pages[i].text = opt.question;
+                    pages[i].title = opt.question;
+                }
+                if (opt.options && Array.isArray(opt.options) && pages[i].options) {
+                    // Merge option texts while keeping original structure
+                    for (let j = 0; j < Math.min(opt.options.length, pages[i].options.length); j++) {
+                        const optText = typeof opt.options[j] === 'string' ? opt.options[j] : opt.options[j]?.text || '';
+                        if (typeof pages[i].options[j] === 'object') {
+                            pages[i].options[j].text = optText;
+                        } else {
+                            pages[i].options[j] = optText;
+                        }
+                    }
+                }
+                if (opt.psychological_role) {
+                    pages[i]._psychologicalRole = opt.psychological_role;
+                }
+            }
+        }
+
+        // Merge optimized result
+        if (optimized.optimized_result) {
+            extracted.results = [
+                {
+                    id: 'r1',
+                    name: optimized.optimized_result.headline || 'Seu Resultado',
+                    description: optimized.optimized_result.body || '',
+                    cta: optimized.optimized_result.cta || 'Ver recomendação →',
+                    minPct: 0, maxPct: 50,
+                },
+                {
+                    id: 'r2',
+                    name: (optimized.optimized_result.headline || 'Resultado') + ' Premium',
+                    description: (optimized.optimized_result.body || '').replace('suas respostas', 'seu perfil avançado'),
+                    cta: optimized.optimized_result.cta || 'Acessar agora →',
+                    minPct: 51, maxPct: 100,
+                },
+            ];
+        }
+
+        extracted.metadata = {
+            ...(extracted.metadata || {}),
+            cloneSource: url,
+            optimizationMode: mode,
+            niche,
+            optimizedAt: Date.now(),
+            executionTimeMs: Date.now() - startTime,
+        };
+
+        console.log(`[CloneOptimize] ✅ Done in ${Date.now() - startTime}ms`);
+        res.json(extracted);
+
+    } catch (err) {
+        console.error('[CloneOptimize] ❌ Error:', err.message);
+        res.status(500).json({ error: err.message || 'Erro ao otimizar quiz', partial: null });
     }
 });
 

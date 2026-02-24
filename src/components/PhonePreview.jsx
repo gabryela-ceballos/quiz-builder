@@ -42,7 +42,15 @@ function BlockRenderer({ block, pc }) {
         case 'image-select': return (<div>
             <h2 style={{ fontSize: 20, fontWeight: 700, marginBottom: 16, lineHeight: 1.35 }}>{block.text || 'Pergunta?'}</h2>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-                {(block.options || []).map((o, i) => renderOption(o, i))}
+                {(block.options || []).map((o, i) => (
+                    <div key={i} style={{ padding: 0, borderRadius: 14, overflow: 'hidden', border: `2px solid ${i === 0 ? pc : '#e2e8f0'}`, background: i === 0 ? `${pc}0d` : '#fff', cursor: 'pointer', position: 'relative' }}>
+                        <div style={{ position: 'absolute', top: 8, left: 8, width: 20, height: 20, borderRadius: 4, border: `2px solid ${i === 0 ? pc : '#cbd5e1'}`, background: i === 0 ? pc : '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2 }}>
+                            {i === 0 && <span style={{ color: '#fff', fontSize: 12, fontWeight: 700 }}>✓</span>}
+                        </div>
+                        {o.image && typeof o.image === 'string' && o.image.startsWith('data:') ? <img src={o.image} alt="" style={{ width: '100%', height: 80, objectFit: 'cover' }} /> : <div style={{ height: 60, background: '#f1f5f9', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{o.emoji ? <span style={{ fontSize: 24 }}>{o.emoji}</span> : <span style={{ fontSize: 20, color: '#cbd5e1' }}>🖼️</span>}</div>}
+                        <div style={{ padding: '8px 10px', fontSize: 13, fontWeight: 500, color: '#2d3748' }}>{o.text || `Opção ${i + 1}`}</div>
+                    </div>
+                ))}
             </div>
         </div>);
 
@@ -89,7 +97,13 @@ function BlockRenderer({ block, pc }) {
         </div>);
 
         case 'video': return (<div>
-            {block.videoUrl ? <div style={{ position: 'relative', paddingBottom: '56.25%', borderRadius: 14, overflow: 'hidden', background: '#000' }}><iframe src={block.videoUrl.replace('watch?v=', 'embed/').replace('youtu.be/', 'youtube.com/embed/')} style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', border: 'none' }} allowFullScreen /></div> : <div style={{ width: '100%', height: 200, background: 'linear-gradient(135deg, #1a1a2e, #16213e)', borderRadius: 14, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 40, flexDirection: 'column', gap: 8 }}>🎬<span style={{ fontSize: 13, color: '#888' }}>Cole a URL do vídeo</span></div>}
+            {block.videoUrl ? (() => {
+                const url = block.videoUrl;
+                const isVturb = url.includes('vturb');
+                const isYT = url.includes('youtube') || url.includes('youtu.be');
+                const embedUrl = isYT ? url.replace('watch?v=', 'embed/').replace('youtu.be/', 'youtube.com/embed/') : isVturb ? url : url;
+                return <div style={{ position: 'relative', paddingBottom: '56.25%', borderRadius: 14, overflow: 'hidden', background: '#000' }}><iframe src={embedUrl} style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', border: 'none' }} allowFullScreen /></div>;
+            })() : <div style={{ width: '100%', height: 200, background: 'linear-gradient(135deg, #1a1a2e, #16213e)', borderRadius: 14, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 40, flexDirection: 'column', gap: 8 }}>🎬<span style={{ fontSize: 13, color: '#888' }}>YouTube ou Vturb</span></div>}
         </div>);
 
         case 'button': {
@@ -209,52 +223,124 @@ function BlockRenderer({ block, pc }) {
 
         case 'chart': {
             const ct = block.chartType || 'bar';
-            const cc = block.chartColor || pc;
-            // Randomize values ±15% to look like personalized results
-            const rawData = block.data || [];
-            const data = rawData.map(d => {
-                const variance = d.value * 0.15;
-                const rand = d.value + (Math.random() * 2 - 1) * variance;
-                return { ...d, value: Math.round(Math.max(1, Math.min(99, rand))) };
-            });
-            const maxVal = Math.max(...data.map(d => d.value), 1);
+            const datasets = block.datasets || [{ name: 'Dados', fillType: 'solid', colors: [pc], data: block.data || [] }];
+            const allData = datasets[0]?.data || [];
+            const maxVal = Math.max(...datasets.flatMap(ds => ds.data.map(d => d.value)), 1);
+
             if (ct === 'pie' || ct === 'donut') {
-                const total = data.reduce((s, d) => s + d.value, 0) || 1;
-                let cum = 0;
-                const stops = data.map((d, i) => { const st = (cum / total) * 100; cum += d.value; return `hsl(${(i * 360 / data.length) % 360}, 60%, 55%) ${st}% ${(cum / total) * 100}%`; });
+                // Dual-ring donut like reference photo 3
                 return (<div>
                     <h2 style={{ fontSize: 18, fontWeight: 700, marginBottom: 14 }}>{block.title || 'Dados'}</h2>
-                    <div style={{ width: 140, height: 140, borderRadius: '50%', background: `conic-gradient(${stops.join(', ')})`, margin: '0 auto 14px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                        {ct === 'donut' && <div style={{ width: 70, height: 70, borderRadius: '50%', background: '#fff' }} />}
+                    <div style={{ position: 'relative', width: 200, height: 200, margin: '0 auto 16px' }}>
+                        {datasets.map((ds, di) => {
+                            const total = ds.data.reduce((s, d) => s + d.value, 0) || 1;
+                            let cum = 0;
+                            const r = di === 0 ? 90 : 65;
+                            const w = di === 0 ? 28 : 22;
+                            return (<svg key={di} viewBox="0 0 200 200" style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%' }}>
+                                {ds.data.map((d, i) => {
+                                    const startAngle = (cum / total) * 360 - 90;
+                                    cum += d.value;
+                                    const endAngle = (cum / total) * 360 - 90;
+                                    const largeArc = endAngle - startAngle > 180 ? 1 : 0;
+                                    const x1 = 100 + r * Math.cos(startAngle * Math.PI / 180);
+                                    const y1 = 100 + r * Math.sin(startAngle * Math.PI / 180);
+                                    const x2 = 100 + r * Math.cos(endAngle * Math.PI / 180);
+                                    const y2 = 100 + r * Math.sin(endAngle * Math.PI / 180);
+                                    const colors = ['#22c55e', '#eab308', '#ef4444', '#3b82f6', '#8b5cf6', '#9ca3af'];
+                                    const color = ds.colors?.[i] || colors[i % colors.length];
+                                    return <path key={i} d={`M${x1},${y1} A${r},${r} 0 ${largeArc} 1 ${x2},${y2}`} fill="none" stroke={color} strokeWidth={w} strokeLinecap="round" />;
+                                })}
+                            </svg>);
+                        })}
+                        {/* Center labels */}
+                        {datasets.length > 1 && <>
+                            <div style={{ position: 'absolute', top: -5, right: -5, background: '#fbbf24', color: '#000', padding: '3px 10px', borderRadius: 12, fontSize: 11, fontWeight: 700, whiteSpace: 'nowrap' }}>{datasets[0]?.name || 'A'}</div>
+                            <div style={{ position: 'absolute', top: 30, left: -10, background: '#6b7280', color: '#fff', padding: '3px 10px', borderRadius: 12, fontSize: 11, fontWeight: 700, whiteSpace: 'nowrap' }}>{datasets[1]?.name || 'B'}</div>
+                        </>}
                     </div>
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, justifyContent: 'center' }}>
-                        {data.map((d, i) => <span key={i} style={{ fontSize: 13, color: '#4a5568', display: 'flex', alignItems: 'center', gap: 5 }}><span style={{ width: 10, height: 10, borderRadius: '50%', background: `hsl(${(i * 360 / data.length) % 360}, 60%, 55%)` }} />{d.label}</span>)}
+                    {/* Legend */}
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, justifyContent: 'center' }}>
+                        {datasets.map((ds, di) => ds.data.map((d, i) => {
+                            const colors = ['#22c55e', '#eab308', '#ef4444', '#3b82f6', '#8b5cf6', '#9ca3af'];
+                            const color = ds.colors?.[i] || colors[i % colors.length];
+                            return (<div key={`${di}-${i}`} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: 60 }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 2 }}>
+                                    <div style={{ width: 8, height: 8, borderRadius: '50%', background: color }} />
+                                    <span style={{ fontSize: 12, color: color, fontWeight: 600 }}>{d.label}</span>
+                                </div>
+                                <span style={{ fontSize: 16, fontWeight: 800, color: '#1a2332' }}>{d.value}</span>
+                            </div>);
+                        }))}
                     </div>
                 </div>);
             }
-            if (ct === 'line') return (<div>
-                <h2 style={{ fontSize: 18, fontWeight: 700, marginBottom: 14 }}>{block.title || 'Dados'}</h2>
-                <svg viewBox="0 0 200 100" style={{ width: '100%' }}>
-                    <polyline fill="none" stroke={cc} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" points={data.map((d, i) => `${(i / Math.max(data.length - 1, 1)) * 190 + 5},${95 - (d.value / maxVal) * 85}`).join(' ')} />
-                    {data.map((d, i) => <circle key={i} cx={(i / Math.max(data.length - 1, 1)) * 190 + 5} cy={95 - (d.value / maxVal) * 85} r="4" fill={cc} />)}
-                </svg>
-                <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 4px 0' }}>{data.map((d, i) => <span key={i} style={{ fontSize: 12, color: '#718096' }}>{d.label}</span>)}</div>
-            </div>);
+
+            if (ct === 'line') {
+                // Multi-line chart with gradient fills like reference photo 4
+                const pts = allData.length;
+                const svgW = 300, svgH = 180, padL = 35, padR = 10, padT = 20, padB = 30;
+                const chartW = svgW - padL - padR, chartH = svgH - padT - padB;
+                return (<div>
+                    <h2 style={{ fontSize: 18, fontWeight: 700, marginBottom: 14 }}>{block.title || 'Dados'}</h2>
+                    <svg viewBox={`0 0 ${svgW} ${svgH}`} style={{ width: '100%' }}>
+                        <defs>
+                            {datasets.map((ds, di) => (
+                                <linearGradient key={di} id={`grad-${block.id}-${di}`} x1="0" y1="0" x2="0" y2="1">
+                                    <stop offset="0%" stopColor={ds.colors?.[ds.colors.length - 1] || pc} stopOpacity="0.4" />
+                                    <stop offset="100%" stopColor={ds.colors?.[ds.colors.length - 1] || pc} stopOpacity="0.02" />
+                                </linearGradient>
+                            ))}
+                        </defs>
+                        {/* Grid lines */}
+                        {[0, 25, 50, 75].map(v => (
+                            <g key={v}>
+                                <line x1={padL} y1={padT + chartH - (v / maxVal) * chartH} x2={svgW - padR} y2={padT + chartH - (v / maxVal) * chartH} stroke="#e5e7eb" strokeWidth="0.5" strokeDasharray="3,3" />
+                                <text x={padL - 4} y={padT + chartH - (v / maxVal) * chartH + 3} textAnchor="end" fontSize="9" fill="#9ca3af">{v}</text>
+                            </g>
+                        ))}
+                        {/* X axis labels */}
+                        {allData.map((d, i) => (
+                            <text key={i} x={padL + (i / Math.max(pts - 1, 1)) * chartW} y={svgH - 8} textAnchor="middle" fontSize="10" fill="#6b7280">{d.label}</text>
+                        ))}
+                        {/* Dataset lines with fills */}
+                        {datasets.map((ds, di) => {
+                            const points = ds.data.map((d, i) => ({ x: padL + (i / Math.max(pts - 1, 1)) * chartW, y: padT + chartH - (d.value / maxVal) * chartH }));
+                            const lineStr = points.map(p => `${p.x},${p.y}`).join(' ');
+                            const areaStr = `${points[0].x},${padT + chartH} ${lineStr} ${points[points.length - 1].x},${padT + chartH}`;
+                            const lineColor = ds.colors?.[ds.colors.length - 1] || pc;
+                            return (<g key={di}>
+                                {ds.fillType === 'gradient' && <polygon points={areaStr} fill={`url(#grad-${block.id}-${di})`} />}
+                                <polyline fill="none" stroke={lineColor} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" points={lineStr} />
+                                {points.map((p, i) => <circle key={i} cx={p.x} cy={p.y} r="4" fill="#fff" stroke={lineColor} strokeWidth="2" />)}
+                                {/* Label on last point */}
+                                {points.length > 0 && <>
+                                    <rect x={points[points.length - 1].x - 30} y={points[points.length - 1].y - 22} width={60} height={18} rx={9} fill={di === 0 ? '#fbbf24' : '#6b7280'} />
+                                    <text x={points[points.length - 1].x} y={points[points.length - 1].y - 10} textAnchor="middle" fontSize="9" fill={di === 0 ? '#000' : '#fff'} fontWeight="700">{ds.name}</text>
+                                </>}
+                            </g>);
+                        })}
+                    </svg>
+                </div>);
+            }
+
             if (ct === 'radial') return (<div>
                 <h2 style={{ fontSize: 18, fontWeight: 700, marginBottom: 14 }}>{block.title || 'Dados'}</h2>
-                {data.map((d, i) => (
+                {allData.map((d, i) => (
                     <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
-                        <svg viewBox="0 0 36 36" style={{ width: 48, height: 48, flexShrink: 0 }}><circle cx="18" cy="18" r="15.5" fill="none" stroke="#e2e8f0" strokeWidth="3" /><circle cx="18" cy="18" r="15.5" fill="none" stroke={cc} strokeWidth="3" strokeDasharray={`${d.value} ${100 - d.value}`} strokeDashoffset="25" strokeLinecap="round" /></svg>
-                        <div><div style={{ fontSize: 14, fontWeight: 600, color: '#2d3748' }}>{d.label}</div><div style={{ fontSize: 12, color: cc }}>{d.value}%</div></div>
+                        <svg viewBox="0 0 36 36" style={{ width: 48, height: 48, flexShrink: 0 }}><circle cx="18" cy="18" r="15.5" fill="none" stroke="#e2e8f0" strokeWidth="3" /><circle cx="18" cy="18" r="15.5" fill="none" stroke={pc} strokeWidth="3" strokeDasharray={`${d.value} ${100 - d.value}`} strokeDashoffset="25" strokeLinecap="round" /></svg>
+                        <div><div style={{ fontSize: 14, fontWeight: 600, color: '#2d3748' }}>{d.label}</div><div style={{ fontSize: 12, color: pc }}>{d.value}%</div></div>
                     </div>
                 ))}
             </div>);
+
+            // Bar chart default
             return (<div>
                 <h2 style={{ fontSize: 18, fontWeight: 700, marginBottom: 14 }}>{block.title || 'Dados'}</h2>
-                {data.map((d, i) => (
+                {allData.map((d, i) => (
                     <div key={i} style={{ marginBottom: 10 }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14, marginBottom: 4 }}><span style={{ color: '#4a5568' }}>{d.label}</span><span style={{ fontWeight: 600, color: cc }}>{d.value}%</span></div>
-                        <div style={{ height: 10, background: '#e2e8f0', borderRadius: 5 }}><div style={{ height: '100%', width: `${d.value}%`, background: cc, borderRadius: 5, transition: 'width 0.3s' }} /></div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14, marginBottom: 4 }}><span style={{ color: '#4a5568' }}>{d.label}</span><span style={{ fontWeight: 600, color: pc }}>{d.value}%</span></div>
+                        <div style={{ height: 10, background: '#e2e8f0', borderRadius: 5 }}><div style={{ height: '100%', width: `${d.value}%`, background: pc, borderRadius: 5, transition: 'width 0.3s' }} /></div>
                     </div>
                 ))}
             </div>);
@@ -315,6 +401,24 @@ function BlockRenderer({ block, pc }) {
             );
         }
 
+        case 'metrics': {
+            const types = {
+                tmb: { label: 'Taxa Metabólica Basal', unit: 'kcal/dia', sample: 1650, icon: '🔥', desc: 'Calorias queimadas em repouso' },
+                geb: { label: 'Gasto Energético Basal', unit: 'kcal/dia', sample: 2100, icon: '⚡', desc: 'Gasto total diário estimado' },
+                iag: { label: 'Índice de Adiposidade', unit: '%', sample: 22, icon: '📊', desc: 'Percentual de gordura corporal' },
+                pesoIdeal: { label: 'Peso Ideal', unit: 'kg', sample: 68, icon: '⚖️', desc: 'Peso recomendado para sua altura' },
+                custom: { label: 'Métrica Personalizada', unit: '', sample: 85, icon: '📐', desc: 'Defina sua própria métrica' },
+            };
+            const mt = types[block.metricType] || types.tmb;
+            return (<div style={{ textAlign: 'center', padding: 8 }}>
+                <div style={{ fontSize: 32, marginBottom: 6 }}>{mt.icon}</div>
+                <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 4, color: '#1a2332' }}>{block.title || mt.label}</h3>
+                <div style={{ fontSize: 36, fontWeight: 800, color: pc, marginBottom: 4 }}>{mt.sample}</div>
+                <div style={{ fontSize: 13, color: '#6b7280', marginBottom: 8 }}>{mt.unit}</div>
+                <p style={{ fontSize: 11, color: '#9ca3af', lineHeight: 1.5 }}>{mt.desc}</p>
+            </div>);
+        }
+
         case 'scroll-picker': {
             const val = block.defaultValue || 170;
             const unit = block.unit || 'cm';
@@ -346,6 +450,198 @@ function BlockRenderer({ block, pc }) {
                 </div>
             </div>
         );
+
+        case 'single-choice': return (<div>
+            <h2 style={{ fontSize: 20, fontWeight: 700, marginBottom: 16, lineHeight: 1.35 }}>{block.text || 'Pergunta?'}</h2>
+            {block.desc && <p style={{ fontSize: 13, color: '#718096', marginBottom: 12 }}>{block.desc}</p>}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {(block.options || []).map((o, i) => (
+                    <div key={i} style={{ padding: '14px 18px', borderRadius: 14, border: `2px solid ${i === 0 ? pc : '#e2e8f0'}`, background: i === 0 ? `${pc}0d` : '#fff', display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer' }}>
+                        <div style={{ width: 20, height: 20, borderRadius: '50%', border: `2px solid ${i === 0 ? pc : '#cbd5e1'}`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                            {i === 0 && <div style={{ width: 10, height: 10, borderRadius: '50%', background: pc }} />}
+                        </div>
+                        {o.emoji && <span style={{ fontSize: 18 }}>{o.emoji}</span>}
+                        <span style={{ fontSize: 15, fontWeight: 500, color: '#2d3748' }}>{o.text || `Opção ${i + 1}`}</span>
+                    </div>
+                ))}
+            </div>
+        </div>);
+
+        case 'yes-no': return (<div style={{ textAlign: 'center' }}>
+            <h2 style={{ fontSize: 20, fontWeight: 700, marginBottom: 16, lineHeight: 1.35 }}>{block.text || 'Pergunta Sim/Não?'}</h2>
+            {block.desc && <p style={{ fontSize: 13, color: '#718096', marginBottom: 16 }}>{block.desc}</p>}
+            <div style={{ display: 'flex', gap: 12 }}>
+                <div style={{ flex: 1, padding: '20px 12px', borderRadius: 14, border: `2px solid ${pc}`, background: `${pc}0d`, textAlign: 'center', cursor: 'pointer' }}>
+                    <div style={{ fontSize: 28, marginBottom: 6 }}>{block.yesEmoji || '👍'}</div>
+                    <div style={{ fontSize: 15, fontWeight: 600, color: '#2d3748' }}>{block.yesLabel || 'Sim'}</div>
+                </div>
+                <div style={{ flex: 1, padding: '20px 12px', borderRadius: 14, border: '2px solid #e2e8f0', textAlign: 'center', cursor: 'pointer' }}>
+                    <div style={{ fontSize: 28, marginBottom: 6 }}>{block.noEmoji || '👎'}</div>
+                    <div style={{ fontSize: 15, fontWeight: 600, color: '#2d3748' }}>{block.noLabel || 'Não'}</div>
+                </div>
+            </div>
+        </div>);
+
+        case 'email-input': return (<div>
+            <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 12, color: '#1a2332' }}>{block.text || 'Seu e-mail'}</h3>
+            <div style={{ padding: '14px 16px', borderRadius: 12, border: '2px solid #e2e8f0', background: '#f7fafc', color: '#a0aec0', fontSize: 15, display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span>@</span> {block.placeholder || 'seuemail@exemplo.com'}
+            </div>
+        </div>);
+
+        case 'phone-input': return (<div>
+            <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 12, color: '#1a2332' }}>{block.text || 'Seu telefone'}</h3>
+            <div style={{ padding: '14px 16px', borderRadius: 12, border: '2px solid #e2e8f0', background: '#f7fafc', color: '#a0aec0', fontSize: 15, display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span>📱</span> {block.placeholder || '(11) 99999-9999'}
+            </div>
+        </div>);
+
+        case 'textarea-input': return (<div>
+            <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 12, color: '#1a2332' }}>{block.text || 'Sua resposta'}</h3>
+            <div style={{ padding: '14px 16px', borderRadius: 12, border: '2px solid #e2e8f0', background: '#f7fafc', color: '#a0aec0', fontSize: 14, minHeight: 80, lineHeight: 1.5 }}>
+                {block.placeholder || 'Digite sua resposta aqui...'}
+            </div>
+            {block.maxLength && <div style={{ fontSize: 11, color: '#a0aec0', textAlign: 'right', marginTop: 4 }}>0/{block.maxLength}</div>}
+        </div>);
+
+        case 'date-input': return (<div>
+            <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 12, color: '#1a2332' }}>{block.text || 'Selecione a data'}</h3>
+            <div style={{ padding: '14px 16px', borderRadius: 12, border: '2px solid #e2e8f0', background: '#f7fafc', color: '#a0aec0', fontSize: 15, display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span>📅</span> DD/MM/AAAA
+            </div>
+        </div>);
+
+        case 'weight-picker': {
+            const val = block.defaultValue || 70;
+            const unit = block.unit || 'kg';
+            return (<div style={{ textAlign: 'center' }}>
+                <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 12, color: '#1a2332' }}>{block.text || 'Qual é o seu peso?'}</h3>
+                <div style={{ position: 'relative', height: 160, overflow: 'hidden', borderRadius: 16, background: 'linear-gradient(to bottom, rgba(0,0,0,0.06), transparent 30%, transparent 70%, rgba(0,0,0,0.06))' }}>
+                    <div style={{ position: 'absolute', left: 0, right: 0, top: '50%', transform: 'translateY(-50%)', height: 40, background: `${pc}12`, borderTop: `2px solid ${pc}`, borderBottom: `2px solid ${pc}`, zIndex: 1 }} />
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', paddingTop: 50 }}>
+                        {[val - 3, val - 2, val - 1, val, val + 1, val + 2, val + 3].map((v, i) => (
+                            <div key={i} style={{ height: 28, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: v === val ? 22 : 16, fontWeight: v === val ? 800 : 400, color: v === val ? pc : '#9ca3af', transition: 'all 0.2s', opacity: Math.abs(v - val) > 2 ? 0.3 : 1 }}>
+                                {v}
+                            </div>
+                        ))}
+                    </div>
+                </div>
+                <div style={{ marginTop: 8, fontSize: 14, fontWeight: 700, color: pc }}>{val} {unit}</div>
+            </div>);
+        }
+
+        case 'audio': return (<div style={{ display: 'flex', gap: 12, alignItems: 'center', padding: '12px 0' }}>
+            {block.imageUrl ? <img src={block.imageUrl} alt="" style={{ width: 48, height: 48, borderRadius: '50%', objectFit: 'cover' }} /> : <div style={{ width: 48, height: 48, borderRadius: '50%', background: `${pc}15`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20, flexShrink: 0 }}>🎙️</div>}
+            <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: '#1a2332', marginBottom: 4 }}>{block.senderName || 'Áudio'}</div>
+                <div style={{ height: 36, background: '#f1f5f9', borderRadius: 18, display: 'flex', alignItems: 'center', padding: '0 12px', gap: 8 }}>
+                    <div style={{ width: 24, height: 24, borderRadius: '50%', background: pc, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 10, flexShrink: 0 }}>▶</div>
+                    <div style={{ flex: 1, display: 'flex', gap: 1.5, alignItems: 'center', height: 20 }}>
+                        {Array.from({ length: 30 }, (_, i) => <div key={i} style={{ width: 2, height: 4 + Math.random() * 12, background: i < 15 ? pc : '#cbd5e1', borderRadius: 1 }} />)}
+                    </div>
+                    <span style={{ fontSize: 10, color: '#94a3b8' }}>0:32</span>
+                </div>
+            </div>
+        </div>);
+
+        case 'video-response': return (<div>
+            <h2 style={{ fontSize: 18, fontWeight: 700, marginBottom: 12, lineHeight: 1.35 }}>{block.text || 'Assista e escolha:'}</h2>
+            <div style={{ width: '100%', height: 200, background: '#000', borderRadius: 14, marginBottom: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
+                {block.videoUrl ? (() => {
+                    const url = block.videoUrl;
+                    const isVturb = url.includes('vturb');
+                    const isYT = url.includes('youtube') || url.includes('youtu.be');
+                    const embedUrl = isYT ? url.replace('watch?v=', 'embed/').replace('youtu.be/', 'youtube.com/embed/') : isVturb ? url : url;
+                    return <iframe src={embedUrl} style={{ width: '100%', height: '100%', border: 'none' }} allowFullScreen />;
+                })() : <div style={{ color: '#666', fontSize: 40 }}>▶</div>}
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {(block.options || []).map((o, i) => (
+                    <div key={i} style={{ display: 'flex', gap: 12, alignItems: 'center', padding: '14px 16px', borderRadius: 14, background: '#1a1a2e', border: '1px solid #2d2d44', cursor: 'pointer' }}>
+                        <div style={{ width: 28, height: 28, borderRadius: 8, border: '1px solid #555', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 700, color: '#aaa', flexShrink: 0 }}>{o.value || String.fromCharCode(65 + i)}</div>
+                        <span style={{ fontSize: 14, color: '#e2e8f0', lineHeight: 1.4 }}>{o.text || `Opção ${i + 1}`}</span>
+                    </div>
+                ))}
+            </div>
+        </div>);
+
+        case 'notification': return (<div style={{ display: 'flex', gap: 12, padding: '14px 16px', background: '#fff', borderRadius: 14, border: '1px solid #e2e8f0', boxShadow: '0 4px 16px rgba(0,0,0,0.08)' }}>
+            <div style={{ fontSize: 24, flexShrink: 0 }}>{block.icon || '🔔'}</div>
+            <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 14, fontWeight: 700, color: '#1a2332', marginBottom: 2 }}>{block.title || 'Notificação'}</div>
+                <div style={{ fontSize: 13, color: '#718096', lineHeight: 1.4 }}>{block.text || 'Texto da notificação...'}</div>
+            </div>
+            <span style={{ fontSize: 10, color: '#a0aec0', flexShrink: 0 }}>agora</span>
+        </div>);
+
+        case 'level': {
+            const v = block.value || 3;
+            const mx = block.maxValue || 5;
+            const c = block.color || '#f59e0b';
+            return (<div>
+                <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 10, color: '#1a2332' }}>{block.title || 'Nível'}</h3>
+                <div style={{ display: 'flex', gap: 4, marginBottom: 6 }}>
+                    {Array.from({ length: mx }, (_, i) => (
+                        <div key={i} style={{ flex: 1, height: 10, borderRadius: 5, background: i < v ? c : '#e2e8f0' }} />
+                    ))}
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span style={{ fontSize: 12, color: c, fontWeight: 600 }}>{block.label || 'Nível'}: {v}/{mx}</span>
+                </div>
+            </div>);
+        }
+
+        case 'faq': return (<div>
+            <h2 style={{ fontSize: 18, fontWeight: 700, marginBottom: 14 }}>{block.title || 'Perguntas Frequentes'}</h2>
+            {(block.items || []).map((item, i) => (
+                <div key={i} style={{ borderBottom: '1px solid #edf2f7', padding: '12px 0' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer' }}>
+                        <span style={{ fontSize: 14, fontWeight: 600, color: '#2d3748' }}>{item.q || `Pergunta ${i + 1}`}</span>
+                        <span style={{ fontSize: 16, color: '#a0aec0', fontWeight: 600 }}>+</span>
+                    </div>
+                    {i === 0 && item.a && <p style={{ fontSize: 13, color: '#718096', marginTop: 8, lineHeight: 1.5 }}>{item.a}</p>}
+                </div>
+            ))}
+            {(block.items || []).length === 0 && <div style={{ color: '#a0aec0', fontSize: 14 }}>Adicione perguntas no painel</div>}
+        </div>);
+
+        case 'before-after': return (<div>
+            <h2 style={{ fontSize: 18, fontWeight: 700, marginBottom: 14, textAlign: 'center' }}>{block.title || 'Antes e Depois'}</h2>
+            <div style={{ display: 'flex', gap: 8 }}>
+                <div style={{ flex: 1, textAlign: 'center' }}>
+                    {block.beforeImage ? <img src={block.beforeImage} alt="" style={{ width: '100%', height: 120, objectFit: 'cover', borderRadius: 12 }} /> : <div style={{ width: '100%', height: 120, background: '#fee2e2', borderRadius: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 28 }}>😔</div>}
+                    <div style={{ fontSize: 12, fontWeight: 600, color: '#ef4444', marginTop: 6 }}>{block.beforeLabel || 'Antes'}</div>
+                </div>
+                <div style={{ flex: 1, textAlign: 'center' }}>
+                    {block.afterImage ? <img src={block.afterImage} alt="" style={{ width: '100%', height: 120, objectFit: 'cover', borderRadius: 12 }} /> : <div style={{ width: '100%', height: 120, background: '#dcfce7', borderRadius: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 28 }}>😃</div>}
+                    <div style={{ fontSize: 12, fontWeight: 600, color: '#22c55e', marginTop: 6 }}>{block.afterLabel || 'Depois'}</div>
+                </div>
+            </div>
+        </div>);
+
+        case 'carousel': return (<div>
+            <div style={{ overflow: 'hidden', borderRadius: 14 }}>
+                {(block.slides || []).length > 0 ? (
+                    <div>
+                        {block.slides[0].image && <img src={block.slides[0].image} alt="" style={{ width: '100%', height: 160, objectFit: 'cover', borderRadius: 14 }} />}
+                        {block.slides[0].text && <p style={{ fontSize: 14, color: '#2d3748', padding: '10px 0', textAlign: 'center' }}>{block.slides[0].text}</p>}
+                    </div>
+                ) : (
+                    <div style={{ height: 160, background: '#f1f5f9', borderRadius: 14, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#a0aec0', fontSize: 14 }}>Adicione slides no painel</div>
+                )}
+            </div>
+            {(block.slides || []).length > 1 && (
+                <div style={{ display: 'flex', justifyContent: 'center', gap: 4, marginTop: 8 }}>
+                    {block.slides.map((_, i) => <div key={i} style={{ width: 8, height: 8, borderRadius: '50%', background: i === 0 ? pc : '#d1d5db' }} />)}
+                </div>
+            )}
+        </div>);
+
+        case 'spacer': return (<div style={{ height: block.height || 40 }} />);
+
+        case 'html-script': return (<div style={{ padding: '12px 14px', background: '#1e1e2e', borderRadius: 12, fontFamily: 'monospace', fontSize: 12, color: '#a6e3a1', lineHeight: 1.6, overflow: 'hidden', maxHeight: 100 }}>
+            {block.code ? <pre style={{ margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{block.code.slice(0, 200)}</pre> : <span style={{ color: '#6c7086' }}>{'<html/> código personalizado'}</span>}
+        </div>);
 
         default: return <div style={{ color: '#888', fontSize: 14 }}>Bloco: {block.type}</div>;
     }
