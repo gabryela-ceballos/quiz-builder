@@ -71,7 +71,7 @@ export default function Plans() {
         <div className="page" style={{ position: 'relative', zIndex: 1 }}>
             <div className="container" style={{ maxWidth: 900 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 32 }}>
-                    <button className="btn btn-ghost btn-sm" onClick={() => navigate('/')}><ArrowLeft size={16} /> Voltar</button>
+                    <button className="btn btn-ghost btn-sm" onClick={() => navigate('/dashboard')}><ArrowLeft size={16} /> Voltar</button>
                 </div>
 
                 <div style={{ textAlign: 'center', marginBottom: 40 }}>

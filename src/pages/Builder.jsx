@@ -40,7 +40,7 @@ export default function Builder() {
   const [clonePhase, setClonePhase] = useState('');
 
   // Redirect to home if no valid mode (only on mount)
-  useEffect(() => { if (!validMode) navigate('/'); }, []);
+  useEffect(() => { if (!validMode) navigate('/dashboard'); }, []);
   if (!validMode) return null;
 
 
@@ -162,7 +162,7 @@ export default function Builder() {
           <>
             {/* Nav */}
             <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 40 }}>
-              <button className="btn btn-ghost btn-sm" onClick={() => navigate('/')}><ArrowLeft size={16} /> Voltar</button>
+              <button className="btn btn-ghost btn-sm" onClick={() => navigate('/dashboard')}><ArrowLeft size={16} /> Voltar</button>
               <div style={{ flex: 1 }}>
                 <div style={{ display: 'flex', gap: 0, alignItems: 'center' }}>
                   {STEPS.map((s, i) => (
@@ -562,7 +562,7 @@ export default function Builder() {
                   </button>
                 </div>
                 <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
-                  <button className="btn btn-ghost" onClick={() => navigate('/')}>← Voltar ao início</button>
+                  <button className="btn btn-ghost" onClick={() => navigate('/dashboard')}>← Voltar ao início</button>
                   <button className="btn btn-primary" onClick={() => window.open(`/q/${published.id}`, '_blank')}><Eye size={16} /> Ver quiz ao vivo</button>
                 </div>
 

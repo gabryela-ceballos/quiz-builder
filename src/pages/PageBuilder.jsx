@@ -318,7 +318,7 @@ export default function PageBuilder() {
                     </div>
                     <div style={{ marginTop: 20, display: 'flex', gap: 8 }}>
                         <button className="btn btn-ghost" style={{ flex: 1 }} onClick={() => window.open(`/q/${saved.id}`, '_blank')}><Eye size={14} style={{ marginRight: 4 }} /> Preview</button>
-                        <button className="btn btn-primary" style={{ flex: 1 }} onClick={() => { setShowShare(false); navigate('/'); }}>← Início</button>
+                        <button className="btn btn-primary" style={{ flex: 1 }} onClick={() => { setShowShare(false); navigate('/dashboard'); }}>← Início</button>
                     </div>
                 </div>
             </div>
@@ -330,8 +330,8 @@ export default function PageBuilder() {
         return (
             <div className="topbar">
                 <div className="topbar-left">
-                    <button onClick={() => navigate('/')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', padding: 4, marginRight: 4, borderRadius: 6 }} title="Voltar ao início" onMouseOver={e => e.currentTarget.style.color = 'var(--text-primary)'} onMouseOut={e => e.currentTarget.style.color = 'var(--text-muted)'}><ArrowLeft size={16} /></button>
-                    <div onClick={() => navigate('/')} style={{ width: 28, height: 28, borderRadius: 7, background: 'linear-gradient(135deg, #6366f1, #8b5cf6)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: 700, fontSize: 10, cursor: 'pointer' }}>QF</div>
+                    <button onClick={() => navigate('/dashboard')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', padding: 4, marginRight: 4, borderRadius: 6 }} title="Voltar ao início" onMouseOver={e => e.currentTarget.style.color = 'var(--text-primary)'} onMouseOut={e => e.currentTarget.style.color = 'var(--text-muted)'}><ArrowLeft size={16} /></button>
+                    <div onClick={() => navigate('/dashboard')} style={{ width: 28, height: 28, borderRadius: 7, background: 'linear-gradient(135deg, #6366f1, #8b5cf6)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: 700, fontSize: 10, cursor: 'pointer' }}>QF</div>
                     <div>
                         <div style={{ fontSize: '0.82rem', fontWeight: 600, lineHeight: 1.2 }}>{config.name || 'Sem título'}</div>
                         <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>/ {quizId || editId || 'novo'}</div>

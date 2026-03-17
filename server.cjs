@@ -90,6 +90,9 @@ try {
 } catch (e) { /* column already exists */ }
 
 // ── Plan limits ──
+// 🧪 TEST MODE — set to false when ready to enforce real limits
+const TEST_MODE = true;
+
 const PLAN_LIMITS = {
     starter: { quiz: 3, ai: 1, clone: 0, price: 29.90, name: 'Starter' },
     pro:     { quiz: 8, ai: 3, clone: 1, price: 49.90, name: 'Pro' },
@@ -264,7 +267,7 @@ app.post('/api/subscription/check', requireAuth, (req, res) => {
     const { action } = req.body; // 'quiz' | 'ai' | 'clone'
     if (!action) return res.status(400).json({ error: 'action required' });
 
-    if (req.user.role === 'admin') return res.json({ allowed: true, remaining: 999 });
+    if (req.user.role === 'admin' || TEST_MODE) return res.json({ allowed: true, remaining: 999 });
 
     const sub = getOrCreateSub(req.user.id);
     const limits = PLAN_LIMITS[sub.plan] || PLAN_LIMITS.starter;
@@ -283,7 +286,7 @@ app.post('/api/subscription/consume', requireAuth, (req, res) => {
     const { action } = req.body; // 'quiz' | 'ai' | 'clone'
     if (!action) return res.status(400).json({ error: 'action required' });
 
-    if (req.user.role === 'admin') return res.json({ ok: true, remaining: 999 });
+    if (req.user.role === 'admin' || TEST_MODE) return res.json({ ok: true, remaining: 999 });
 
     const sub = getOrCreateSub(req.user.id);
     const limits = PLAN_LIMITS[sub.plan] || PLAN_LIMITS.starter;

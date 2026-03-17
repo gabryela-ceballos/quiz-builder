@@ -17,7 +17,7 @@ export default function Dashboard() {
     useEffect(() => {
         (async () => {
             const q = await getQuiz(id);
-            if (!q) { navigate('/'); return; }
+            if (!q) { navigate('/dashboard'); return; }
             setQuiz(q);
             setLeads(await getLeads(id));
             setRaw(await getAnalytics(id));
@@ -92,7 +92,7 @@ export default function Dashboard() {
                 height: 56, background: '#fff', borderBottom: '1px solid var(--border)',
                 display: 'flex', alignItems: 'center', padding: '0 24px', position: 'sticky', top: 0, zIndex: 100,
             }}>
-                <button onClick={() => navigate('/')} style={{
+                <button onClick={() => navigate('/dashboard')} style={{
                     background: 'none', border: '1px solid var(--border)', borderRadius: 10, cursor: 'pointer',
                     color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: 6, padding: '6px 14px',
                     fontSize: '0.8rem', fontWeight: 500, transition: 'all 0.15s',

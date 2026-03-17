@@ -1686,7 +1686,7 @@ export default function Player() {
   const [result, setResult] = useState(null);
   const [optionAnim, setOptionAnim] = useState(null);
 
-  useEffect(() => { getQuiz(id).then(q => { if (!q) navigate('/'); else { setQuiz(q); recordEvent(q.id, 'view'); const hasClone = q.pages?.some(p => p.type === 'html-script'); if (hasClone) { setScreen('playing'); recordEvent(q.id, 'start'); } } }); }, [id]);
+  useEffect(() => { getQuiz(id).then(q => { if (!q) navigate('/dashboard'); else { setQuiz(q); recordEvent(q.id, 'view'); const hasClone = q.pages?.some(p => p.type === 'html-script'); if (hasClone) { setScreen('playing'); recordEvent(q.id, 'start'); } } }); }, [id]);
 
   const T = useMemo(() => quiz ? buildTheme(quiz) : null, [quiz]);
   const ne = useMemo(() => quiz ? getNicheEmojis(quiz.niche) : NE.outro, [quiz]);

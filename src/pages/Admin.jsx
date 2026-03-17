@@ -177,7 +177,7 @@ export default function Admin() {
                     <div style={{ fontSize: '0.72rem', color: 'rgba(255,255,255,0.4)', marginBottom: 4 }}>{currentUser?.name}</div>
                     <div style={{ fontSize: '0.65rem', color: 'rgba(255,255,255,0.25)', marginBottom: 12 }}>{currentUser?.email}</div>
                     <div style={{ display: 'flex', gap: 8 }}>
-                        <button onClick={() => navigate('/')} style={{ flex: 1, padding: '6px 0', borderRadius: 6, border: '1px solid rgba(255,255,255,0.1)', background: 'transparent', color: 'rgba(255,255,255,0.5)', fontSize: '0.68rem', cursor: 'pointer' }}>
+                        <button onClick={() => navigate('/dashboard')} style={{ flex: 1, padding: '6px 0', borderRadius: 6, border: '1px solid rgba(255,255,255,0.1)', background: 'transparent', color: 'rgba(255,255,255,0.5)', fontSize: '0.68rem', cursor: 'pointer' }}>
                             <ArrowLeft size={11} style={{ marginRight: 4 }} /> Início
                         </button>
                         <button onClick={logout} style={{ flex: 1, padding: '6px 0', borderRadius: 6, border: '1px solid rgba(239,68,68,0.2)', background: 'rgba(239,68,68,0.06)', color: '#f87171', fontSize: '0.68rem', cursor: 'pointer' }}>

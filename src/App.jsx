@@ -9,11 +9,12 @@ import Login from './pages/Login';
 import Plans from './pages/Plans';
 import Profile from './pages/Profile';
 import Settings from './pages/Settings';
+import Landing from './pages/Landing';
 import { isLoggedIn, isAdmin } from './hooks/useAuth';
 
 function ProtectedRoute({ children, adminOnly = false }) {
   if (!isLoggedIn()) return <Navigate to="/login" replace />;
-  if (adminOnly && !isAdmin()) return <Navigate to="/" replace />;
+  if (adminOnly && !isAdmin()) return <Navigate to="/dashboard" replace />;
   return children;
 }
 
@@ -23,9 +24,10 @@ function AppShell() {
   return (
     <>
       <Routes>
-        <Route path="/login" element={isLoggedIn() ? <Navigate to="/" replace /> : <Login />} />
+        <Route path="/" element={isLoggedIn() ? <Navigate to="/dashboard" replace /> : <Landing />} />
+        <Route path="/login" element={isLoggedIn() ? <Navigate to="/dashboard" replace /> : <Login />} />
         <Route path="/q/:id" element={<Player />} />
-        <Route path="/" element={<ProtectedRoute><Home /></ProtectedRoute>} />
+        <Route path="/dashboard" element={<ProtectedRoute><Home /></ProtectedRoute>} />
         <Route path="/builder" element={<ProtectedRoute><Builder /></ProtectedRoute>} />
         <Route path="/builder/page" element={<ProtectedRoute><PageBuilder /></ProtectedRoute>} />
         <Route path="/builder/page/:id" element={<ProtectedRoute><PageBuilder /></ProtectedRoute>} />

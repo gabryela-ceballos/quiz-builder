@@ -30,7 +30,7 @@ export default function Settings() {
     return (
         <div className="page" style={{ position: 'relative', zIndex: 1 }}>
             <div className="container" style={{ maxWidth: 640, paddingTop: 28 }}>
-                <button className="btn btn-ghost btn-sm" onClick={() => navigate('/')} style={{ marginBottom: 24 }}>
+                <button className="btn btn-ghost btn-sm" onClick={() => navigate('/dashboard')} style={{ marginBottom: 24 }}>
                     <ArrowLeft size={16} /> Voltar
                 </button>
 
