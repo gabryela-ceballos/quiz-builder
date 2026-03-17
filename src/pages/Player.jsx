@@ -1236,6 +1236,37 @@ function ClonedPageBlock({ html, fullCode, onAdvance, btnStyle, buttonActions, p
     
     // Remove old nav bridge and inject new player bridge
     let iframeDoc = fullCode;
+    
+    // ═══ SANITIZE BROKEN STYLE ATTRIBUTES ═══
+    // Cloned pages often have broken HTML where double quotes inside style values
+    // (e.g. font-family:"Inter", sans-serif) break attribute parsing.
+    // Fix: replace style="..." content to escape inner quotes properly.
+    iframeDoc = iframeDoc.replace(/style\s*=\s*"([^"]*)"/gi, function(match, inner) {
+      // If the inner content looks truncated or broken (very short for a style), skip
+      if (inner.length < 2) return match;
+      return 'style="' + inner + '"';
+    });
+    // More aggressive fix: find broken patterns like style="font-family:X, " attr="" 
+    // and reconstruct them by merging orphaned attributes back into the style
+    iframeDoc = iframeDoc.replace(/style="([^"]*)"(\s+(?:sans|serif|monospace|cursive|fantasy|system-ui|Arial|Helvetica|Inter|Roboto|Poppins|Montserrat|Open|Lato|Nunito|Outfit|Raleway|Oswald|Playfair)[^"]*="[^"]*")+/gi, function(match, styleContent) {
+      // Extract the orphaned font parts and reconstruct
+      const orphanedParts = match.slice(match.indexOf('"', 7) + 1);
+      // Clean up: remove fake attribute patterns
+      const cleanedParts = orphanedParts.replace(/\s*\w+="[^"]*"/g, '').replace(/[="]/g, '').trim();
+      const fixedStyle = styleContent + (cleanedParts ? ', ' + cleanedParts : '');
+      return 'style="' + fixedStyle + '"';
+    });
+    // Nuclear fix: convert all style attributes to use single quotes for font-family values
+    iframeDoc = iframeDoc.replace(/style="([^"]*)"/gi, function(match, content) {
+      // Replace font-family double quotes with single quotes inside style values
+      const fixed = content.replace(/font-family\s*:\s*([^;]*)/gi, function(fMatch, fValue) {
+        return 'font-family:' + fValue.replace(/"/g, "'");
+      });
+      return 'style="' + fixed + '"';
+    });
+    // Fix any remaining broken attributes caused by style quote escaping
+    // Pattern: orphaned attributes like sans="" serif","="" that aren't real attributes
+    iframeDoc = iframeDoc.replace(/\s+(sans|serif|monospace|cursive|fantasy)(?:-serif)?="[^"]*"/gi, '');
     // Strip ALL external scripts (prevents Next.js hydration crash)
     iframeDoc = iframeDoc.replace(/<script[^>]+src=["'][^"']*["'][^>]*><\/script>/gi, '');
     iframeDoc = iframeDoc.replace(/<script[^>]+src=["'][^"']*["'][^>]*>\s*<\/script>/gi, '');
