@@ -884,6 +884,107 @@ export default function CloneEditor({ block, onBlockChange, stepName, primaryCol
                         </div>
                     )}
 
+                    {/* ── Resize handles on selected element ── */}
+                    {selectedPath && selectionRect && (
+                        <>
+                            {/* Bottom-right corner resize */}
+                            <div
+                                onMouseDown={(e) => {
+                                    e.stopPropagation(); e.preventDefault();
+                                    const startX = e.clientX, startY = e.clientY;
+                                    const startW = selectionRect.width, startH = selectionRect.height;
+                                    const onMove = (ev) => {
+                                        const dx = ev.clientX - startX;
+                                        const dy = ev.clientY - startY;
+                                        const newW = Math.max(40, Math.round(startW + dx));
+                                        const newH = Math.max(20, Math.round(startH + dy));
+                                        window.__cloneEditorApi?.updateStyle(selectedPath, {
+                                            width: `${newW}px`, maxWidth: '100%',
+                                            height: `${newH}px`, margin: '0 auto', display: 'block',
+                                        });
+                                        setSelectionRect(prev => ({ ...prev, width: newW, height: newH }));
+                                    };
+                                    const onUp = () => {
+                                        document.body.style.cursor = ''; document.body.style.userSelect = '';
+                                        window.removeEventListener('mousemove', onMove);
+                                        window.removeEventListener('mouseup', onUp);
+                                    };
+                                    document.body.style.cursor = 'nwse-resize'; document.body.style.userSelect = 'none';
+                                    window.addEventListener('mousemove', onMove);
+                                    window.addEventListener('mouseup', onUp);
+                                }}
+                                style={{
+                                    position: 'absolute',
+                                    top: selectionRect.top + selectionRect.height - 6,
+                                    left: selectionRect.left + selectionRect.width - 6,
+                                    width: 14, height: 14, cursor: 'nwse-resize', zIndex: 25,
+                                    background: '#fff', border: `2px solid ${pc}`, borderRadius: '0 0 4px 0',
+                                    boxShadow: '0 1px 4px rgba(0,0,0,0.2)',
+                                }}
+                            />
+                            {/* Bottom-center resize (height only) */}
+                            <div
+                                onMouseDown={(e) => {
+                                    e.stopPropagation(); e.preventDefault();
+                                    const startY = e.clientY;
+                                    const startH = selectionRect.height;
+                                    const onMove = (ev) => {
+                                        const dy = ev.clientY - startY;
+                                        const newH = Math.max(20, Math.round(startH + dy));
+                                        window.__cloneEditorApi?.updateStyle(selectedPath, { height: `${newH}px` });
+                                        setSelectionRect(prev => ({ ...prev, height: newH }));
+                                    };
+                                    const onUp = () => {
+                                        document.body.style.cursor = ''; document.body.style.userSelect = '';
+                                        window.removeEventListener('mousemove', onMove);
+                                        window.removeEventListener('mouseup', onUp);
+                                    };
+                                    document.body.style.cursor = 'ns-resize'; document.body.style.userSelect = 'none';
+                                    window.addEventListener('mousemove', onMove);
+                                    window.addEventListener('mouseup', onUp);
+                                }}
+                                style={{
+                                    position: 'absolute',
+                                    top: selectionRect.top + selectionRect.height - 3,
+                                    left: selectionRect.left + selectionRect.width / 2 - 12,
+                                    width: 24, height: 6, cursor: 'ns-resize', zIndex: 25,
+                                    background: pc, borderRadius: 3, opacity: 0.6,
+                                }}
+                            />
+                            {/* Right-center resize (width only) */}
+                            <div
+                                onMouseDown={(e) => {
+                                    e.stopPropagation(); e.preventDefault();
+                                    const startX = e.clientX;
+                                    const startW = selectionRect.width;
+                                    const onMove = (ev) => {
+                                        const dx = ev.clientX - startX;
+                                        const newW = Math.max(40, Math.round(startW + dx));
+                                        window.__cloneEditorApi?.updateStyle(selectedPath, {
+                                            width: `${newW}px`, maxWidth: '100%', margin: '0 auto', display: 'block',
+                                        });
+                                        setSelectionRect(prev => ({ ...prev, width: newW }));
+                                    };
+                                    const onUp = () => {
+                                        document.body.style.cursor = ''; document.body.style.userSelect = '';
+                                        window.removeEventListener('mousemove', onMove);
+                                        window.removeEventListener('mouseup', onUp);
+                                    };
+                                    document.body.style.cursor = 'ew-resize'; document.body.style.userSelect = 'none';
+                                    window.addEventListener('mousemove', onMove);
+                                    window.addEventListener('mouseup', onUp);
+                                }}
+                                style={{
+                                    position: 'absolute',
+                                    top: selectionRect.top + selectionRect.height / 2 - 12,
+                                    left: selectionRect.left + selectionRect.width - 3,
+                                    width: 6, height: 24, cursor: 'ew-resize', zIndex: 25,
+                                    background: pc, borderRadius: 3, opacity: 0.6,
+                                }}
+                            />
+                        </>
+                    )}
+
                     {/* Content — mobile frame */}
                     <div style={{
                         background: '#fff',

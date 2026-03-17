@@ -857,21 +857,33 @@ export default function PhonePreview({ step, selectedBlockId, onSelectBlock, onD
     const [resizingIdx, setResizingIdx] = useState(null);
     const canvasRef = useRef(null);
 
-    // ── Block resize via drag ──
+    // ── Block resize via drag (corner handle) ──
+    const resizeStart = useRef(null);
     useEffect(() => {
         if (resizingIdx === null) return;
         const onMove = (e) => {
-            if (resizingIdx === null || !canvasRef.current) return;
+            if (resizingIdx === null || !canvasRef.current || !resizeStart.current) return;
             const canvasRect = canvasRef.current.getBoundingClientRect();
-            const canvasW = canvasRect.width - 56; // subtract padding
-            const mouseX = e.clientX - canvasRect.left - 28; // subtract left padding
-            const pct = Math.round(Math.max(25, Math.min(100, (mouseX / canvasW) * 100)));
-            // Snap to 25% increments
-            const snapped = Math.round(pct / 25) * 25;
-            onBlockChange?.(resizingIdx, { ...blocks[resizingIdx], widthPct: snapped });
+            const canvasW = canvasRect.width - 56;
+            const block = blocks[resizingIdx];
+            const startW = resizeStart.current.widthPct || 100;
+            const startH = resizeStart.current.heightPx || null;
+            const dx = e.clientX - resizeStart.current.x;
+            const dy = e.clientY - resizeStart.current.y;
+            // Width: map dx to percentage of canvas
+            const dxPct = (dx / canvasW) * 200; // *2 because block is centered
+            let newW = Math.round(Math.max(20, Math.min(100, startW + dxPct)));
+            newW = Math.round(newW / 5) * 5; // snap to 5%
+            // Height: direct pixel change
+            const changes = { ...block, widthPct: newW };
+            if (startH !== null) {
+                const newH = Math.max(30, Math.round(startH + dy));
+                changes.heightPx = newH;
+            }
+            onBlockChange?.(resizingIdx, changes);
         };
-        const onUp = () => { setResizingIdx(null); document.body.style.cursor = ''; document.body.style.userSelect = ''; };
-        document.body.style.cursor = 'ew-resize';
+        const onUp = () => { setResizingIdx(null); resizeStart.current = null; document.body.style.cursor = ''; document.body.style.userSelect = ''; };
+        document.body.style.cursor = 'nwse-resize';
         document.body.style.userSelect = 'none';
         window.addEventListener('mousemove', onMove);
         window.addEventListener('mouseup', onUp);
@@ -931,13 +943,13 @@ export default function PhonePreview({ step, selectedBlockId, onSelectBlock, onD
                 )}
 
                 {/* Flowing grid: blocks wrap based on their widthPct */}
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, justifyContent: 'center' }}>
                     {blocks.map((block, idx) => {
                         const w = block.widthPct || 100;
                         const isSelected = selectedBlockId === block.id;
                         const isDropTarget = (hoverIdx === idx || dragOverBlockIdx === idx) && dragIdx !== idx;
                         return (
-                            <div key={block.id} style={{ width: `calc(${w}% - ${w < 100 ? 4 : 0}px)`, transition: resizingIdx === idx ? 'none' : 'width 0.2s ease', flexShrink: 0 }}>
+                            <div key={block.id} style={{ width: `calc(${w}% - ${w < 100 ? 4 : 0}px)`, transition: resizingIdx === idx ? 'none' : 'width 0.2s ease, height 0.2s ease', flexShrink: 0, margin: w < 100 ? '0 auto' : undefined }}>
                                 {isDropTarget && <div style={{ height: 4, background: pc, borderRadius: 2, margin: '4px 0' }} />}
                                 <div
                                     draggable={resizingIdx === null}
@@ -970,6 +982,8 @@ export default function PhonePreview({ step, selectedBlockId, onSelectBlock, onD
                                         background: block.bgColor || 'transparent',
                                         padding: block.padding || 0,
                                         margin: block.margin || 0,
+                                        height: block.heightPx ? `${block.heightPx}px` : 'auto',
+                                        overflow: block.heightPx ? 'hidden' : 'visible',
                                         borderRadius: block.borderRadius === 999 ? 999 : (block.borderRadius || 0),
                                         border: block.borderStyle && block.borderStyle !== 'none' ? `${block.borderWidth || 1}px ${block.borderStyle} ${block.borderColor || '#e2e8f0'}` : 'none',
                                         boxShadow: block.shadow === 'sm' ? '0 1px 3px rgba(0,0,0,0.08)' : block.shadow === 'md' ? '0 4px 12px rgba(0,0,0,0.1)' : block.shadow === 'lg' ? '0 8px 24px rgba(0,0,0,0.15)' : 'none',
@@ -978,18 +992,41 @@ export default function PhonePreview({ step, selectedBlockId, onSelectBlock, onD
                                     }}>
                                         <BlockRenderer block={block} pc={pc} />
                                     </div>
-                                    {/* Right-edge resize handle */}
+                                    {/* Corner resize handle (bottom-right) */}
                                     {isSelected && (
                                         <div
-                                            onMouseDown={e => { e.stopPropagation(); e.preventDefault(); setResizingIdx(idx); }}
+                                            onMouseDown={e => {
+                                                e.stopPropagation(); e.preventDefault();
+                                                resizeStart.current = { x: e.clientX, y: e.clientY, widthPct: block.widthPct || 100, heightPx: block.heightPx || null };
+                                                setResizingIdx(idx);
+                                            }}
                                             style={{
-                                                position: 'absolute', top: 8, bottom: 8, right: -4, width: 8,
-                                                cursor: 'ew-resize', borderRadius: 4, zIndex: 6,
-                                                background: pc, opacity: 0.6,
+                                                position: 'absolute', bottom: -5, right: -5, width: 14, height: 14,
+                                                cursor: 'nwse-resize', borderRadius: '0 0 4px 0', zIndex: 6,
+                                                background: '#fff', border: `2px solid ${pc}`,
+                                                boxShadow: '0 1px 4px rgba(0,0,0,0.15)',
+                                                transition: 'transform 0.15s',
+                                            }}
+                                            onMouseEnter={e => e.currentTarget.style.transform = 'scale(1.3)'}
+                                            onMouseLeave={e => e.currentTarget.style.transform = 'scale(1)'}
+                                        />
+                                    )}
+                                    {/* Bottom-center resize handle (height only) */}
+                                    {isSelected && (
+                                        <div
+                                            onMouseDown={e => {
+                                                e.stopPropagation(); e.preventDefault();
+                                                resizeStart.current = { x: e.clientX, y: e.clientY, widthPct: block.widthPct || 100, heightPx: block.heightPx || null };
+                                                setResizingIdx(idx);
+                                            }}
+                                            style={{
+                                                position: 'absolute', bottom: -5, left: '50%', transform: 'translateX(-50%)',
+                                                width: 24, height: 6, cursor: 'ns-resize', borderRadius: 3, zIndex: 6,
+                                                background: pc, opacity: 0.5,
                                                 transition: 'opacity 0.15s',
                                             }}
                                             onMouseEnter={e => e.currentTarget.style.opacity = '1'}
-                                            onMouseLeave={e => e.currentTarget.style.opacity = '0.6'}
+                                            onMouseLeave={e => e.currentTarget.style.opacity = '0.5'}
                                         />
                                     )}
                                 </div>
