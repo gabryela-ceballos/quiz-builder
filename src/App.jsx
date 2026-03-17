@@ -6,6 +6,9 @@ import Player from './pages/Player';
 import Dashboard from './pages/Dashboard';
 import Admin from './pages/Admin';
 import Login from './pages/Login';
+import Plans from './pages/Plans';
+import Profile from './pages/Profile';
+import Settings from './pages/Settings';
 import { isLoggedIn, isAdmin } from './hooks/useAuth';
 
 function ProtectedRoute({ children, adminOnly = false }) {
@@ -29,6 +32,9 @@ function AppShell() {
         <Route path="/builder/:id" element={<ProtectedRoute><Builder /></ProtectedRoute>} />
         <Route path="/dashboard/:id" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
         <Route path="/admin" element={<ProtectedRoute adminOnly><Admin /></ProtectedRoute>} />
+        <Route path="/planos" element={<ProtectedRoute><Plans /></ProtectedRoute>} />
+        <Route path="/perfil" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
+        <Route path="/configuracoes" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
       </Routes>
     </>
   );

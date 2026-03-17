@@ -3,10 +3,14 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import { useNavigate, useLocation, useParams } from 'react-router-dom';
 import { Save, Eye, Monitor, Smartphone, ChevronUp, ChevronDown, Trash2, Plus, X, Layout, Bookmark, Settings, Share2, Play, Undo2, Redo2, Grid, MousePointerClick, CheckCircle2, Users, BarChart3, Palette, Package, GitBranch, Globe, Star, Upload, Download, Filter, TrendingDown, Mail, PlayCircle, Lightbulb, Wrench, Clipboard, ArrowRight, ArrowLeft } from 'lucide-react';
 import { saveQuiz, getQuiz, getAnalytics, getLeads } from '../hooks/useQuizStore';
+import { consumeQuota } from '../hooks/useAuth';
 import { BLOCK_TYPES, CATEGORIES, createBlock } from '../utils/blockTypes';
 import { getAdminTemplates, getUserTemplates, saveUserTemplate, deleteUserTemplate } from '../utils/templates';
 import { cloneAndOptimize } from '../utils/cloneService';
 import PhonePreview from '../components/PhonePreview';
+import CloneEditor from '../components/CloneEditor';
+import ClonePropertiesPanel from '../components/ClonePropertiesPanel';
+import { INSERTABLE_ELEMENTS, translateGadgetHtml } from '../components/CloneEditor';
 import PropertiesPanel from '../components/PropertiesPanel';
 import DomainSettings from '../components/DomainSettings';
 
@@ -39,6 +43,7 @@ export default function PageBuilder() {
     const [showTemplates, setShowTemplates] = useState(false);
     const [isClone, setIsClone] = useState(false);
     const [clonedResults, setClonedResults] = useState(null);
+    const [clonedCSS, setClonedCSS] = useState(null);
     const [quizId, setQuizId] = useState(null);
     const [activeTab, setActiveTab] = useState(() => {
         const urlTab = new URLSearchParams(window.location.search).get('tab');
@@ -51,11 +56,13 @@ export default function PageBuilder() {
     const [showAiStepModal, setShowAiStepModal] = useState(false);
     const [aiStepPrompt, setAiStepPrompt] = useState('');
     const [aiStepLoading, setAiStepLoading] = useState(false);
+    const [cloneSelectedEl, setCloneSelectedEl] = useState(null);
     const [renamingStepIdx, setRenamingStepIdx] = useState(null);
     const [showCloneModal, setShowCloneModal] = useState(false);
     const [cloneUrl, setCloneUrl] = useState('');
     const [cloneNiche, setCloneNiche] = useState('emagrecimento');
-    const [cloneMode, setCloneMode] = useState('screenshots');
+    const [cloneMode, setCloneMode] = useState('url');
+    const [cloneLang, setCloneLang] = useState('original');
     const [cloneProduct, setCloneProduct] = useState('');
     const [cloneLoading, setCloneLoading] = useState(false);
     const [cloneProgress, setCloneProgress] = useState({ stage: '', msg: '', pct: 0 });
@@ -85,6 +92,7 @@ export default function PageBuilder() {
                 if (!q) return;
                 setQuizId(q.id);
                 setConfig(c => ({ ...c, name: q.name || '', primaryColor: q.primaryColor || '#2563eb', bgColor: q.bgColor || '', niche: q.niche || 'outro', collectLead: q.collectLead !== false, welcomeHeadline: q.welcome?.headline || '', welcomeSub: q.welcome?.subheadline || '', welcomeCta: q.welcome?.cta || 'Começar →' }));
+                if (q.cloneLang && q.cloneLang !== 'original') setCloneLang(q.cloneLang);
                 if (q.steps?.length) { setSteps(q.steps); setActiveStepIdx(0); }
                 else if (q.pages?.length) {
                     const ns = q.pages.map((p, i) => {
@@ -94,6 +102,7 @@ export default function PageBuilder() {
                     setSteps(ns); setActiveStepIdx(0);
                 }
                 if (q.results?.length) setClonedResults(q.results);
+                if (q.clonedCSS) setClonedCSS(q.clonedCSS);
             });
             // Load analytics/leads
             getAnalytics(editId).then(a => setAnalytics(a));
@@ -114,6 +123,32 @@ export default function PageBuilder() {
             setShowOnboarding(true);
         }
     }, [editId]);
+
+    // Auto-open clone modal when navigated with ?clone=true, and read funnel name from URL
+    useEffect(() => {
+        const params = new URLSearchParams(location.search);
+        if (params.get('clone') === 'true') {
+            setShowCloneModal(true);
+            setCloneMode('url');
+        }
+        const urlName = params.get('name');
+        if (urlName && !config.name) {
+            setConfig(c => ({ ...c, name: urlName }));
+        }
+    }, []);
+
+    // Warn before leaving without saving
+    const hasConsumedQuizRef = useRef(!!editId); // Don't consume quota for existing quizzes
+    useEffect(() => {
+        const handler = (e) => {
+            if (steps.length > 0 && !saved) {
+                e.preventDefault();
+                e.returnValue = 'Tem certeza? Salve antes de sair ou perderá o quiz!';
+            }
+        };
+        window.addEventListener('beforeunload', handler);
+        return () => window.removeEventListener('beforeunload', handler);
+    }, [steps, saved]);
 
     const activeStep = steps[activeStepIdx] || null;
     const selectedBlock = activeStep && selectedBlockIdx !== null ? activeStep.blocks[selectedBlockIdx] : null;
@@ -182,8 +217,14 @@ export default function PageBuilder() {
         setDragOverBlockIdx(null);
     }, [dragFromSidebar, activeStepIdx, steps]);
 
+    // Stable ID ref — generate once and reuse for the lifetime of this builder session
+    const stableIdRef = useRef(null);
     const buildQuiz = () => {
-        const id = quizId || editId || Math.random().toString(36).slice(2, 10);
+        let id = quizId || editId;
+        if (!id) {
+            if (!stableIdRef.current) stableIdRef.current = Math.random().toString(36).slice(2, 10);
+            id = stableIdRef.current;
+        }
         const nonEmptySteps = steps.filter(s => s.blocks.length > 0);
         const pages = nonEmptySteps.map((s, si) => {
             if (s.blocks.length === 1) return { ...s.blocks[0], id: `p${si}_0`, sectionIndex: 0 };
@@ -198,19 +239,46 @@ export default function PageBuilder() {
             stepPageMap[s.id] = i;
             if (s.goToStep) stepGoToMap[i] = s.goToStep;
         });
-        return { id, name: config.name || 'Meu Quiz', emoji: isClone ? '🔗' : '🧱', primaryColor: config.primaryColor, bgColor: config.bgColor, colorPalette: [config.primaryColor], productName: config.name, niche: config.niche, metadata: { niche: config.niche, subTheme: config.name, tone: 'profissional', palette: [config.primaryColor], emojiStyle: 'moderno' }, sections: [{ label: 'Quiz', startIndex: 0 }], welcome: { headline: config.welcomeHeadline || 'Descubra', subheadline: config.welcomeSub || '', cta: config.welcomeCta || 'Começar →' }, pages, questions: allBlocks.filter(b => ['choice', 'statement', 'likert', 'image-select', 'single-choice', 'yes-no'].includes(b.type)), results: clonedResults || dr, steps, stepPageMap, stepGoToMap, collectLead: config.collectLead, published: false, createdAt: Date.now(), updatedAt: Date.now() };
+        return { id, name: config.name || 'Meu Quiz', emoji: isClone ? '🔗' : '🧱', primaryColor: config.primaryColor, bgColor: config.bgColor, colorPalette: [config.primaryColor], productName: config.name, niche: config.niche, metadata: { niche: config.niche, subTheme: config.name, tone: 'profissional', palette: [config.primaryColor], emojiStyle: 'moderno' }, sections: [{ label: 'Quiz', startIndex: 0 }], welcome: { headline: config.welcomeHeadline || 'Descubra', subheadline: config.welcomeSub || '', cta: config.welcomeCta || 'Começar →' }, pages, questions: allBlocks.filter(b => ['choice', 'statement', 'likert', 'image-select', 'single-choice', 'yes-no'].includes(b.type)), results: clonedResults || dr, steps, stepPageMap, stepGoToMap, clonedCSS: clonedCSS || undefined, cloneLang: cloneLang || 'original', collectLead: config.collectLead, published: false, createdAt: Date.now(), updatedAt: Date.now() };
     };
 
     const handleSave = async () => {
         if (!steps.length) return;
-        const result = await saveQuiz(buildQuiz());
-        if (result) { setQuizId(result.id); showToastMsg('Salvo!'); }
+        const quiz = buildQuiz();
+        console.log('[Save] Saving quiz with id:', quiz.id, 'quizId state:', quizId, 'editId:', editId);
+        const result = await saveQuiz(quiz);
+        console.log('[Save] Server response:', result?.id, result ? 'OK' : 'FAILED');
+        if (result) {
+            setQuizId(result.id);
+            // Consume quiz quota on first save only
+            if (!hasConsumedQuizRef.current) {
+                hasConsumedQuizRef.current = true;
+                try { await consumeQuota('quiz'); } catch (e) { /* don't block */ }
+            }
+            // Update URL without remounting the component
+            if (!editId && result.id) {
+                window.history.replaceState(null, '', `/builder/page/${result.id}`);
+            }
+            showToastMsg('Salvo!');
+        }
     };
 
     const handlePublish = async () => {
         if (!steps.length || !steps.some(s => s.blocks.length > 0)) return showToastMsg('Adicione pelo menos 1 bloco!');
-        const result = await saveQuiz(buildQuiz());
-        if (result) { setSaved(result); setShowShare(true); showToastMsg('🎉 Publicado com sucesso!'); }
+        const quiz = { ...buildQuiz(), published: true };
+        console.log('[Publish] Publishing quiz with id:', quiz.id, 'quizId state:', quizId, 'editId:', editId);
+        const result = await saveQuiz(quiz);
+        console.log('[Publish] Server response:', result?.id, result ? 'OK' : 'FAILED');
+        if (result) {
+            setQuizId(result.id);
+            // Update URL without remounting the component
+            if (!editId && result.id) {
+                window.history.replaceState(null, '', `/builder/page/${result.id}`);
+            }
+            setSaved(result);
+            setShowShare(true);
+            showToastMsg('🎉 Publicado com sucesso!');
+        }
     };
 
     const quizUrl = saved ? `${window.location.origin}/q/${saved.id}` : (quizId ? `${window.location.origin}/q/${quizId}` : '');
@@ -376,7 +444,25 @@ export default function PageBuilder() {
                                         }}
                                         onClick={() => { setActiveStepIdx(i); setSelectedBlockIdx(null); setRenamingStepIdx(null); }}
                                         onDoubleClick={() => setRenamingStepIdx(i)}
-                                        style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '7px 6px', marginBottom: 1, borderRadius: 6, cursor: 'grab', borderTop: 'none' }}>
+                                        style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '7px 6px', marginBottom: 1, borderRadius: 6, cursor: 'grab', borderTop: 'none',
+                                            background: (() => {
+                                                const code = (step.blocks || []).map(b => (b.fullCode || b.code || '')).join(' ').toLowerCase();
+                                                if (!code) return undefined;
+                                                return (/class\s*=\s*["'][^"']*(?:swiper|slick|carousel|slideshow)/.test(code) ||
+                                                    code.includes('data-clone-chart') || code.includes('chartbargrow') ||
+                                                    code.includes('<video') || code.includes('youtube.com/embed') ||
+                                                    code.includes('type="range"')) ? 'rgba(245,158,11,0.1)' : undefined;
+                                            })() }}>
+                                        {(() => {
+                                            const code = (step.blocks || []).map(b => (b.fullCode || b.code || '')).join(' ').toLowerCase();
+                                            if (!code) return null;
+                                            return (/class\s*=\s*["'][^"']*(?:swiper|slick|carousel|slideshow)/.test(code) ||
+                                                code.includes('data-clone-chart') || code.includes('chartbargrow') ||
+                                                code.includes('<video') || code.includes('youtube.com/embed') ||
+                                                code.includes('type="range"'))
+                                                ? <span title="Esta etapa tem elementos complexos que podem precisar de ajuste" style={{ fontSize: '0.7rem', flexShrink: 0, filter: 'saturate(2)', lineHeight: 1 }}>⚠️</span>
+                                                : null;
+                                        })()}
                                         <span style={{ fontSize: '0.68rem', fontWeight: 700, width: 18, textAlign: 'center', opacity: 0.4, flexShrink: 0, cursor: 'grab' }} title="Arraste para reordenar">{i + 1}</span>
                                         {renamingStepIdx === i ? (
                                             <input value={step.name} onChange={e => renameStep(i, e.target.value)} onClick={e => e.stopPropagation()}
@@ -419,7 +505,7 @@ export default function PageBuilder() {
                             </div>
                         </div>
 
-                        {/* Component palette column */}
+                        {/* Component palette column — always show full gadgets */}
                         <div style={{ flex: 1, overflowY: 'auto', paddingBottom: 20 }}>
                             {CATEGORIES.map(cat => {
                                 const items = BLOCK_TYPES.filter(b => b.category === cat.key);
@@ -427,15 +513,71 @@ export default function PageBuilder() {
                                 return (
                                     <div key={cat.key} className="sidebar-section">
                                         <div className="sidebar-section-title">{cat.label}</div>
-                                        {items.map(bt => (
+                                        {items.map(bt => {
+                                            const htmlMap = {
+                                                        'text': '<p data-gadget-type="text" style="padding:8px 16px;font-size:16px;line-height:1.6;color:inherit">Seu texto aqui</p>',
+                                                        'capture': '<div data-gadget-type="capture" style="padding:8px 16px;margin:8px 0"><label style="display:block;font-size:14px;font-weight:600;margin-bottom:6px;color:inherit">Campo</label><input type="text" placeholder="Digite aqui" style="width:100%;padding:12px 14px;border-radius:10px;border:1px solid #d1d5db;font-size:15px;outline:none;box-sizing:border-box"/></div>',
+                                                        'email-capture': '<div data-gadget-type="email-input" style="padding:8px 16px;margin:8px 0"><label style="display:block;font-size:14px;font-weight:600;margin-bottom:6px;color:inherit">Seu e-mail</label><input type="email" placeholder="seu@email.com" style="width:100%;padding:12px 14px;border-radius:10px;border:1px solid #d1d5db;font-size:15px;outline:none;box-sizing:border-box"/></div>',
+                                                        'email-input': '<div data-gadget-type="email-input" style="padding:8px 16px;margin:8px 0"><label style="display:block;font-size:14px;font-weight:600;margin-bottom:6px;color:inherit">Seu e-mail</label><input type="email" placeholder="seu@email.com" style="width:100%;padding:12px 14px;border-radius:10px;border:1px solid #d1d5db;font-size:15px;outline:none;box-sizing:border-box"/></div>',
+                                                        'phone-capture': '<div data-gadget-type="phone-input" style="padding:8px 16px;margin:8px 0"><label style="display:block;font-size:14px;font-weight:600;margin-bottom:6px;color:inherit">Seu WhatsApp</label><input type="tel" placeholder="(00) 00000-0000" style="width:100%;padding:12px 14px;border-radius:10px;border:1px solid #d1d5db;font-size:15px;outline:none;box-sizing:border-box"/></div>',
+                                                        'phone-input': '<div data-gadget-type="phone-input" style="padding:8px 16px;margin:8px 0"><label style="display:block;font-size:14px;font-weight:600;margin-bottom:6px;color:inherit">Seu WhatsApp</label><input type="tel" placeholder="(00) 00000-0000" style="width:100%;padding:12px 14px;border-radius:10px;border:1px solid #d1d5db;font-size:15px;outline:none;box-sizing:border-box"/></div>',
+                                                        'textarea-input': '<div data-gadget-type="textarea-input" style="padding:8px 16px;margin:8px 0"><label style="display:block;font-size:14px;font-weight:600;margin-bottom:6px;color:inherit">Sua resposta</label><textarea placeholder="Digite sua resposta..." style="width:100%;padding:12px 14px;border-radius:10px;border:1px solid #d1d5db;font-size:15px;outline:none;box-sizing:border-box;min-height:80px;resize:vertical"></textarea></div>',
+                                                        'date-input': '<div data-gadget-type="date-input" style="padding:8px 16px;margin:8px 0"><label style="display:block;font-size:14px;font-weight:600;margin-bottom:6px;color:inherit">Data</label><input type="date" style="width:100%;padding:12px 14px;border-radius:10px;border:1px solid #d1d5db;font-size:15px;outline:none;box-sizing:border-box"/></div>',
+                                                        'choice': '<div data-gadget-type="choice" style="padding:12px 16px;display:flex;flex-direction:column;gap:8px"><div style="padding:14px;border:2px solid #e5e7eb;border-radius:12px;font-size:15px;font-weight:500;cursor:pointer;text-align:center">Opção A</div><div style="padding:14px;border:2px solid #e5e7eb;border-radius:12px;font-size:15px;font-weight:500;cursor:pointer;text-align:center">Opção B</div><div style="padding:14px;border:2px solid #e5e7eb;border-radius:12px;font-size:15px;font-weight:500;cursor:pointer;text-align:center">Opção C</div></div>',
+                                                        'single-choice': '<div data-gadget-type="single-choice" style="padding:12px 16px;display:flex;flex-direction:column;gap:8px"><div style="padding:14px;border:2px solid #e5e7eb;border-radius:12px;font-size:15px;font-weight:500;cursor:pointer;display:flex;align-items:center;gap:10px"><div style="width:20px;height:20px;border:2px solid #d1d5db;border-radius:50%;flex-shrink:0"></div>Opção 1</div><div style="padding:14px;border:2px solid #e5e7eb;border-radius:12px;font-size:15px;font-weight:500;cursor:pointer;display:flex;align-items:center;gap:10px"><div style="width:20px;height:20px;border:2px solid #d1d5db;border-radius:50%;flex-shrink:0"></div>Opção 2</div></div>',
+                                                        'image-select': '<div data-gadget-type="image-select" style="padding:12px 16px;display:flex;flex-direction:column;gap:8px"><div style="padding:14px;border:2px solid #e5e7eb;border-radius:12px;font-size:15px;font-weight:500;cursor:pointer;display:flex;align-items:center;gap:10px"><div style="width:20px;height:20px;border:2px solid #d1d5db;border-radius:4px;flex-shrink:0"></div>Opção A</div><div style="padding:14px;border:2px solid #e5e7eb;border-radius:12px;font-size:15px;font-weight:500;cursor:pointer;display:flex;align-items:center;gap:10px"><div style="width:20px;height:20px;border:2px solid #d1d5db;border-radius:4px;flex-shrink:0"></div>Opção B</div></div>',
+                                                        'yes-no': '<div data-gadget-type="yes-no" style="padding:16px;display:flex;gap:10px;justify-content:center"><div style="flex:1;padding:20px;border:2px solid #e5e7eb;border-radius:14px;text-align:center;cursor:pointer;font-size:15px;font-weight:600"><div style="font-size:28px;margin-bottom:6px">👍</div>Sim</div><div style="flex:1;padding:20px;border:2px solid #e5e7eb;border-radius:14px;text-align:center;cursor:pointer;font-size:15px;font-weight:600"><div style="font-size:28px;margin-bottom:6px">👎</div>Não</div></div>',
+                                                        'image': '<img data-gadget-type="image" src="https://placehold.co/600x200/e5e7eb/999?text=Sua+imagem" style="width:100%;max-width:100%;height:auto;display:block;margin:8px 0;border-radius:8px"/>',
+                                                        'video': '<div data-gadget-type="video" style="padding:16px;text-align:center"><div style="background:#f1f5f9;border-radius:12px;padding:40px 20px;border:2px dashed #d1d5db"><div style="font-size:32px;margin-bottom:8px">▶️</div><div style="font-size:14px;font-weight:600;color:#64748b">Cole o link do vídeo</div></div></div>',
+                                                        'button': '<button data-gadget-type="button" style="display:block;width:80%;margin:12px auto;padding:14px 24px;background:#2563eb;color:#fff;border:none;border-radius:10px;font-size:16px;font-weight:700;cursor:pointer;text-align:center">Clique aqui</button>',
+                                                        'logo': '<div data-gadget-type="logo" style="text-align:center;padding:12px"><img src="https://placehold.co/120x40/e5e7eb/999?text=Logo" style="height:40px;object-fit:contain"/></div>',
+                                                        'spacer': '<div data-gadget-type="spacer" style="height:32px"></div>',
+                                                        'carousel': '<div data-gadget-type="carousel" data-carousel style="padding:16px;overflow-x:auto;display:flex;gap:12px;scroll-snap-type:x mandatory"><div style="min-width:260px;flex-shrink:0;border-radius:12px;overflow:hidden;scroll-snap-align:start;border:1px solid #e5e7eb"><img src="https://placehold.co/260x180/e5e7eb/999?text=Slide+1" style="width:100%;height:180px;object-fit:cover"/><div style="padding:10px;font-size:14px;font-weight:600">Slide 1</div></div><div style="min-width:260px;flex-shrink:0;border-radius:12px;overflow:hidden;scroll-snap-align:start;border:1px solid #e5e7eb"><img src="https://placehold.co/260x180/e5e7eb/999?text=Slide+2" style="width:100%;height:180px;object-fit:cover"/><div style="padding:10px;font-size:14px;font-weight:600">Slide 2</div></div></div>',
+                                                        'before-after': '<div data-gadget-type="before-after" style="padding:16px;display:flex;gap:8px"><div style="flex:1;text-align:center"><div style="font-size:12px;font-weight:700;color:#ef4444;margin-bottom:6px">ANTES</div><img src="https://placehold.co/150x200/fef2f2/ef4444?text=Antes" style="width:100%;border-radius:8px"/></div><div style="flex:1;text-align:center"><div style="font-size:12px;font-weight:700;color:#10b981;margin-bottom:6px">DEPOIS</div><img src="https://placehold.co/150x200/ecfdf5/10b981?text=Depois" style="width:100%;border-radius:8px"/></div></div>',
+                                                        'chart': '<div data-gadget-type="chart" style="padding:16px;margin:10px 0"><div style="font-size:14px;font-weight:700;margin-bottom:12px;text-align:center;color:inherit">Resultados</div><div style="display:flex;align-items:flex-end;gap:8px;height:120px;padding:0 10px"><div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px"><div style="width:100%;background:linear-gradient(to top,#6366f1,#818cf8);border-radius:6px 6px 0 0;height:80%"></div><span style="font-size:11px;font-weight:600">A</span></div><div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px"><div style="width:100%;background:linear-gradient(to top,#f59e0b,#fbbf24);border-radius:6px 6px 0 0;height:55%"></div><span style="font-size:11px;font-weight:600">B</span></div><div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px"><div style="width:100%;background:linear-gradient(to top,#10b981,#34d399);border-radius:6px 6px 0 0;height:90%"></div><span style="font-size:11px;font-weight:600">C</span></div></div></div>',
+                                                        'bmi': '<div data-gadget-type="bmi" style="padding:16px;text-align:center"><div style="font-size:14px;font-weight:700;margin-bottom:8px">IMC</div><div style="width:100px;height:100px;border-radius:50%;background:conic-gradient(#10b981 0% 65%,#e5e7eb 65% 100%);margin:0 auto;position:relative"><div style="position:absolute;inset:25%;background:#fff;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:800">24</div></div></div>',
+                                                        'metrics': '<div data-gadget-type="metrics" style="padding:16px;display:flex;gap:8px"><div style="flex:1;text-align:center;padding:12px;background:#f0f5ff;border-radius:10px"><div style="font-size:20px;font-weight:800;color:#2563eb">1850</div><div style="font-size:11px;color:#64748b">kcal/dia</div></div><div style="flex:1;text-align:center;padding:12px;background:#ecfdf5;border-radius:10px"><div style="font-size:20px;font-weight:800;color:#10b981">68kg</div><div style="font-size:11px;color:#64748b">peso ideal</div></div></div>',
+                                                        'alert': '<div data-gadget-type="alert" style="padding:14px 16px;margin:8px;background:#fef2f2;border:1px solid #fecaca;border-radius:12px;display:flex;gap:10px;align-items:center"><span style="font-size:20px">⚠️</span><div style="font-size:14px;font-weight:600;color:#991b1b">Atenção! Mensagem importante aqui.</div></div>',
+                                                        'notification': '<div data-gadget-type="notification" style="padding:12px 16px;margin:8px;background:#ecfdf5;border:1px solid #a7f3d0;border-radius:12px;display:flex;gap:10px;align-items:center"><span style="font-size:18px">🔔</span><div style="font-size:14px;font-weight:600;color:#065f46">Notificação de exemplo</div></div>',
+                                                        'timer': '<div data-gadget-type="timer" style="text-align:center;padding:12px"><div style="font-size:28px;font-weight:800;font-family:monospace;color:#ef4444">05:00</div><div style="font-size:11px;color:#64748b">Oferta expira em</div></div>',
+                                                        'loading': '<div data-gadget-type="loading" style="text-align:center;padding:32px 16px"><div style="width:40px;height:40px;border:3px solid #e5e7eb;border-top-color:#6366f1;border-radius:50%;margin:0 auto 12px;animation:spin 1s linear infinite"></div><div style="font-size:14px;font-weight:600;color:#374151">Analisando...</div></div>',
+                                                        'progress-bar': '<div data-gadget-type="progress-bar" style="text-align:center;padding:32px 16px"><div style="font-size:14px;font-weight:700;margin-bottom:12px" data-pb-title>Analisando seu perfil...</div><div style="height:12px;background:#e5e7eb;border-radius:6px;overflow:hidden;margin-bottom:8px"><div data-pb-fill style="height:100%;width:0%;background:linear-gradient(90deg,#10b981,#34d399);border-radius:6px;transition:width 0.1s linear"></div></div><div data-pb-pct style="font-size:12px;font-weight:700;color:#10b981">0%</div></div><script data-pb-anim>(function(){var f=document.querySelector("[data-pb-fill]");var p=document.querySelector("[data-pb-pct]");if(!f||!p)return;var start=Date.now();var dur=5000;var iv=setInterval(function(){var e=Date.now()-start;var pct=Math.min(100,Math.round(e/dur*100));f.style.width=pct+"%";p.textContent=pct+"%";if(pct>=100){clearInterval(iv);setTimeout(function(){window.parent.postMessage({type:"clone-advance"},"*")},600)}},50)})()</script>',
+                                                        'risk-chart': '<div data-gadget-type="risk-chart" style="padding:16px;text-align:center"><div style="font-size:14px;font-weight:700;margin-bottom:12px">Seu nível de risco</div><svg data-rc-svg viewBox="0 0 320 180" style="width:100%;max-width:380px"><defs><linearGradient id="rcG" x1="0" x2="1" y1="0" y2="0"><stop offset="0%" stop-color="#22c55e"/><stop offset="30%" stop-color="#eab308"/><stop offset="60%" stop-color="#f97316"/><stop offset="100%" stop-color="#ef4444"/></linearGradient><linearGradient id="rcGF" x1="0" x2="1" y1="0" y2="0"><stop offset="0%" stop-color="#22c55e" stop-opacity="0.35"/><stop offset="30%" stop-color="#eab308" stop-opacity="0.35"/><stop offset="60%" stop-color="#f97316" stop-opacity="0.35"/><stop offset="100%" stop-color="#ef4444" stop-opacity="0.35"/></linearGradient></defs><line x1="10" y1="150" x2="310" y2="150" stroke="#475569" stroke-width="1"/><path data-rc-area fill="url(#rcGF)" d="M10 150 L310 150 Z"/><path data-rc-line fill="none" stroke="url(#rcG)" stroke-width="3" stroke-linecap="round" d="M10 150"/><g data-rc-dots></g><g data-rc-label style="opacity:0"></g><text x="10" y="176" text-anchor="middle" fill="#94a3b8" font-size="9" font-weight="500">Baixo</text><text x="85" y="176" text-anchor="middle" fill="#94a3b8" font-size="9" font-weight="500">Aceitável</text><text x="160" y="176" text-anchor="middle" fill="#94a3b8" font-size="9" font-weight="500">Normal</text><text x="235" y="176" text-anchor="middle" fill="#94a3b8" font-size="9" font-weight="500">Médio</text><text x="310" y="176" text-anchor="middle" fill="#94a3b8" font-size="9" font-weight="500">Alto</text></svg></div><script data-rc-anim>(function(){var vals=[0.08,0.18,0.35,0.62,0.95];var W=300,H=120,pL=10,pT=30;var uIdx=3;var dur=3000;var start=Date.now();var area=document.querySelector("[data-rc-area]");var line=document.querySelector("[data-rc-line]");var dots=document.querySelector("[data-rc-dots]");var lbl=document.querySelector("[data-rc-label]");if(!area||!line)return;function anim(){var t=Math.min(1,(Date.now()-start)/dur);var pts=vals.map(function(v,i){return{x:pL+i/4*W,y:pT+H-v*t*H}});var d="M "+pts[0].x+" "+pts[0].y;for(var i=1;i<pts.length;i++){var p=pts[i-1],c=pts[i];var cx1=p.x+(c.x-p.x)*0.5;d+=" C "+cx1+" "+p.y+" "+cx1+" "+c.y+" "+c.x+" "+c.y}line.setAttribute("d",d);area.setAttribute("d",d+" L "+pts[4].x+" 150 L "+pts[0].x+" 150 Z");var dh="";for(var i=0;i<pts.length;i++){var r=i===uIdx?6:4;var f=i===uIdx?"#fff":"url(#rcG)";var s=i===uIdx?" stroke=\\"#eab308\\" stroke-width=\\"2\\"":"";dh+="<circle cx=\\""+pts[i].x+"\\" cy=\\""+pts[i].y+"\\" r=\\""+r+"\\" fill=\\""+f+"\\""+s+" opacity=\\""+(t>0.1?1:0)+"\\"/>";}dots.innerHTML=dh;if(t>0.5){lbl.style.opacity=Math.min(1,(t-0.5)*4);var ux=pts[uIdx].x,uy=pts[uIdx].y;lbl.innerHTML="<rect x=\\""+(ux-22)+"\\" y=\\""+(uy-28)+"\\" width=\\"44\\" height=\\"20\\" rx=\\"10\\" fill=\\"#eab308\\"/><text x=\\""+ux+"\\" y=\\""+(uy-15)+"\\" text-anchor=\\"middle\\" fill=\\"#fff\\" font-size=\\"10\\" font-weight=\\"700\\">Você</text>"}if(t<1){requestAnimationFrame(anim)}else{setTimeout(function(){window.parent.postMessage({type:"clone-advance"},"*")},1200)}}anim()})()</script>',
+                                                        'testimonial': '<div data-gadget-type="testimonial" style="padding:16px;display:flex;gap:10px;align-items:flex-start"><div style="width:40px;height:40px;border-radius:50%;background:#e5e7eb;flex-shrink:0"></div><div><div style="font-size:13px;font-weight:700;color:#111">Maria S.</div><div style="font-size:11px;color:#f59e0b;margin-bottom:4px">★★★★★</div><div style="font-size:13px;color:#4b5563">"Resultado incrível! Recomendo demais."</div></div></div>',
+                                                        'social-proof': '<div data-gadget-type="social-proof" style="padding:16px;display:flex;gap:10px;align-items:flex-start"><div style="width:40px;height:40px;border-radius:50%;background:#e5e7eb;flex-shrink:0"></div><div><div style="font-size:13px;font-weight:700;color:#111">Maria S.</div><div style="font-size:11px;color:#f59e0b;margin-bottom:4px">★★★★★</div><div style="font-size:13px;color:#4b5563">"Resultado incrível! Recomendo demais."</div></div></div>',
+                                                        'faq': '<div data-gadget-type="faq" style="padding:12px 16px"><details style="border:1px solid #e5e7eb;border-radius:10px;padding:12px;margin-bottom:8px"><summary style="font-weight:600;font-size:14px;cursor:pointer">Pergunta frequente 1?</summary><p style="margin-top:8px;font-size:13px;color:#64748b">Resposta da pergunta.</p></details><details style="border:1px solid #e5e7eb;border-radius:10px;padding:12px"><summary style="font-weight:600;font-size:14px;cursor:pointer">Pergunta frequente 2?</summary><p style="margin-top:8px;font-size:13px;color:#64748b">Resposta da pergunta.</p></details></div>',
+                                                        'price': '<div data-gadget-type="price" style="padding:16px;text-align:center;border:2px solid #e5e7eb;border-radius:14px;margin:8px"><div style="font-size:12px;font-weight:700;color:#6366f1;text-transform:uppercase;margin-bottom:4px">Premium</div><div style="font-size:32px;font-weight:800;color:#111">R$97</div><div style="font-size:12px;color:#64748b;margin-bottom:12px">pagamento único</div><button style="width:100%;padding:12px;background:#6366f1;color:#fff;border:none;border-radius:10px;font-size:15px;font-weight:700;cursor:pointer">Quero agora</button></div>',
+                                                        'pricing': '<div data-gadget-type="price" style="padding:16px;text-align:center;border:2px solid #e5e7eb;border-radius:14px;margin:8px"><div style="font-size:12px;font-weight:700;color:#6366f1;text-transform:uppercase;margin-bottom:4px">Premium</div><div style="font-size:32px;font-weight:800;color:#111">R$97</div><div style="font-size:12px;color:#64748b;margin-bottom:12px">pagamento único</div><button style="width:100%;padding:12px;background:#6366f1;color:#fff;border:none;border-radius:10px;font-size:15px;font-weight:700;cursor:pointer">Quero agora</button></div>',
+                                                        'insight': '<div data-gadget-type="insight" style="padding:16px;background:#fffbeb;border-radius:12px;border-left:4px solid #f59e0b;margin:8px"><div style="font-size:13px;font-weight:700;color:#92400e;margin-bottom:4px">💡 Insight</div><div style="font-size:14px;color:#78350f">Dica personalizada baseada nas suas respostas.</div></div>',
+                                                        'result': '<div data-gadget-type="result" style="padding:20px 16px;text-align:center;background:linear-gradient(135deg,#f0f5ff,#ede9fe);border-radius:12px;margin:8px"><div style="font-size:40px;margin-bottom:8px">🎉</div><div style="font-size:20px;font-weight:800;color:#1e1b4b;margin-bottom:4px">Seu Resultado</div><p style="font-size:14px;color:#64748b">Parabéns! Veja sua personalização.</p></div>',
+                                                        'welcome': '<div data-gadget-type="welcome" style="padding:32px 16px;text-align:center;background:linear-gradient(135deg,#6366f1,#8b5cf6);border-radius:0;color:#fff"><div style="font-size:24px;font-weight:800;margin-bottom:8px">Título do Quiz</div><p style="font-size:14px;opacity:0.85;margin-bottom:20px">Descubra algo incrível sobre você</p><button style="padding:14px 32px;background:#fff;color:#6366f1;border:none;border-radius:10px;font-size:16px;font-weight:700;cursor:pointer">Começar →</button></div>',
+                                                        'cover': '<div data-gadget-type="welcome" style="padding:32px 16px;text-align:center;background:linear-gradient(135deg,#6366f1,#8b5cf6);border-radius:0;color:#fff"><div style="font-size:24px;font-weight:800;margin-bottom:8px">Título do Quiz</div><p style="font-size:14px;opacity:0.85;margin-bottom:20px">Descubra algo incrível sobre você</p><button style="padding:14px 32px;background:#fff;color:#6366f1;border:none;border-radius:10px;font-size:16px;font-weight:700;cursor:pointer">Começar →</button></div>',
+                                                        'level': '<div data-gadget-type="level" style="padding:12px 16px"><div style="font-size:13px;font-weight:600;color:#374151;margin-bottom:6px">Progresso</div><div style="height:10px;background:#e5e7eb;border-radius:5px;overflow:hidden"><div style="height:100%;width:65%;background:linear-gradient(90deg,#6366f1,#8b5cf6);border-radius:5px"></div></div><div style="font-size:11px;color:#9ca3af;margin-top:4px;text-align:right">65%</div></div>',
+                                                        'arguments': '<div data-gadget-type="arguments" style="padding:12px 16px"><div style="display:flex;gap:10px;align-items:flex-start;margin-bottom:10px"><span style="font-size:18px">✅</span><div style="font-size:14px;font-weight:500;color:#374151">Benefício número 1</div></div><div style="display:flex;gap:10px;align-items:flex-start;margin-bottom:10px"><span style="font-size:18px">✅</span><div style="font-size:14px;font-weight:500;color:#374151">Benefício número 2</div></div><div style="display:flex;gap:10px;align-items:flex-start"><span style="font-size:18px">✅</span><div style="font-size:14px;font-weight:500;color:#374151">Benefício número 3</div></div></div>',
+                                                        'audio': '<div data-gadget-type="audio" style="padding:16px;text-align:center"><div style="background:#f1f5f9;border-radius:12px;padding:20px;border:2px dashed #d1d5db"><div style="font-size:24px;margin-bottom:6px">🔊</div><div style="font-size:13px;font-weight:600;color:#64748b">Player de áudio</div></div></div>',
+                                                        'video-response': '<div data-gadget-type="video-response" style="padding:16px"><div style="background:#f8fafc;border-radius:12px;padding:20px;text-align:center;border:1px solid #e2e8f0;margin-bottom:10px"><div style="font-size:28px;margin-bottom:6px">🎥</div><div style="font-size:13px;font-weight:600;color:#64748b">Vídeo</div></div><div style="display:flex;flex-direction:column;gap:8px"><div style="padding:12px;border:2px solid #e5e7eb;border-radius:10px;font-size:14px;font-weight:500;text-align:center;cursor:pointer">Opção 1</div><div style="padding:12px;border:2px solid #e5e7eb;border-radius:10px;font-size:14px;font-weight:500;text-align:center;cursor:pointer">Opção 2</div></div></div>',
+                                                    };
+                                            return (
                                             <div key={bt.type} className="sidebar-item" draggable
-                                                onDragStart={() => setDragFromSidebar(bt.type)}
-                                                onDragEnd={() => { setDragFromSidebar(null); setDragOverBlockIdx(null); }}
-                                                onClick={() => { if (!steps.length) addStep('Etapa 1'); addBlockToStep(bt.type); }}>
+                                                onDragStart={() => {
+                                                    setDragFromSidebar(bt.type);
+                                                    window.__draggedGadgetHtml = translateGadgetHtml(htmlMap[bt.type] || `<div data-gadget-type="${bt.type}" style="padding:16px;text-align:center;border:2px dashed #d1d5db;border-radius:10px;margin:8px;font-size:14px;color:#9ca3af">${bt.label}</div>`, cloneLang);
+                                                }}
+                                                onDragEnd={() => { setDragFromSidebar(null); setDragOverBlockIdx(null); window.__draggedGadgetHtml = null; }}
+                                                onClick={() => {
+                                                    if (activeStep?.blocks?.[0]?.type?.startsWith('html-') && window.__cloneEditorApi?.insertElement) {
+                                                        const html = htmlMap[bt.type] || `<div data-gadget-type="${bt.type}" style="padding:16px;text-align:center;border:2px dashed #d1d5db;border-radius:10px;margin:8px;font-size:14px;color:#9ca3af">${bt.label}</div>`;
+                                                        window.__cloneEditorApi.insertElement(html);
+                                                    } else {
+                                                        if (!steps.length) addStep('Etapa 1');
+                                                        addBlockToStep(bt.type);
+                                                    }
+                                                }}>
                                                 <div className="sidebar-item-icon">{bt.icon}</div>
                                                 <span>{bt.label}</span>
                                             </div>
-                                        ))}
+                                            );
+                                        })}
                                     </div>
                                 );
                             })}
@@ -443,12 +585,23 @@ export default function PageBuilder() {
                     </div>
 
                     {/* CENTER CANVAS */}
-                    <div className="builder-canvas" onClick={(e) => { if (e.target === e.currentTarget) setSelectedBlockIdx(null); }}>
-                        <PhonePreview step={activeStep} selectedBlockId={selectedBlock?.id}
-                            onSelectBlock={i => setSelectedBlockIdx(i)} onDeleteBlock={i => deleteBlock(i)}
-                            onBlockChange={(i, b) => updateBlock(i, b)} config={config} viewMode={viewMode}
-                            onDropBlock={handleDropBlock} onDragOverBlock={setDragOverBlockIdx}
-                            dragOverBlockIdx={dragFromSidebar ? dragOverBlockIdx : null} onReorderBlock={reorderBlock} />
+                    <div className="builder-canvas" onClick={(e) => { if (e.target === e.currentTarget) setSelectedBlockIdx(null); }} style={activeStep?.blocks?.[0]?.type === 'html-script' ? { padding: 0, display: 'flex' } : {}}>
+                        {activeStep?.blocks?.[0]?.type === 'html-script' ? (
+                            <CloneEditor
+                                block={activeStep.blocks[0]}
+                                onBlockChange={(updatedBlock) => updateBlock(0, updatedBlock)}
+                                stepName={activeStep.name}
+                                primaryColor={config.primaryColor}
+                                onElementSelect={(info) => setCloneSelectedEl(info)}
+                                lang={cloneLang}
+                            />
+                        ) : (
+                            <PhonePreview step={activeStep} selectedBlockId={selectedBlock?.id}
+                                onSelectBlock={i => setSelectedBlockIdx(i)} onDeleteBlock={i => deleteBlock(i)}
+                                onBlockChange={(i, b) => updateBlock(i, b)} config={config} viewMode={viewMode}
+                                onDropBlock={handleDropBlock} onDragOverBlock={setDragOverBlockIdx}
+                                dragOverBlockIdx={dragFromSidebar ? dragOverBlockIdx : null} onReorderBlock={reorderBlock} />
+                        )}
                         {/* Bottom toolbar */}
                         <div style={{ position: 'fixed', bottom: 16, left: '50%', transform: 'translateX(-50%)', display: 'flex', gap: 4, background: '#fff', border: '1px solid var(--border)', borderRadius: 10, padding: '4px 8px', boxShadow: 'var(--shadow-md)', zIndex: 50 }}>
                             <button className="topbar-icon" style={{ width: 28, height: 28, border: 'none' }} title="Desfazer"><Undo2 size={14} /></button>
@@ -507,7 +660,252 @@ export default function PageBuilder() {
 
                     {/* RIGHT PANEL */}
                     <div className="builder-right">
-                        {selectedBlock ? (
+                        {/* Clone element properties panel */}
+                        {activeStep?.blocks?.[0]?.type === 'html-script' && cloneSelectedEl ? (
+                            cloneSelectedEl.type === 'gadget' ? (
+                                /* ── Native PropertiesPanel for gadgets ── */
+                                (() => {
+                                    const gType = cloneSelectedEl.gadgetType || 'text';
+
+                                    const virtualBlock = (() => {
+                                        const base = {
+                                            type: gType,
+                                            text: cloneSelectedEl.text || '',
+                                            imageUrl: cloneSelectedEl.src || '',
+                                            width: 100,
+                                        };
+                                        // Extract chart data from innerHTML
+                                        if (gType === 'chart') {
+                                            const el = cloneSelectedEl.innerHTML || '';
+                                            base.chartType = 'bar';
+                                            base.chartColor = '#6366f1';
+                                            base.title = 'Resultados';
+                                            base.data = [
+                                                { label: 'A', value: 80 },
+                                                { label: 'B', value: 55 },
+                                                { label: 'C', value: 90 },
+                                            ];
+                                        }
+                                        return base;
+                                    })();
+                                    const handleGadgetChange = (newBlock) => {
+                                        if (!window.__cloneEditorApi) return;
+                                        const path = cloneSelectedEl.gadgetPath || cloneSelectedEl.path;
+                                        let html = '';
+                                        const t = newBlock.type || gType;
+                                        if (t === 'text') {
+                                            html = `<p data-gadget-type="text" style="padding:8px 16px;font-size:16px;line-height:1.6;color:inherit">${newBlock.text || ''}</p>`;
+                                        } else if (t === 'button') {
+                                            const bg = newBlock.buttonColor || '#2563eb';
+                                            const txt = newBlock.buttonTextColor || '#fff';
+                                            const rad = newBlock.buttonRadius ?? 10;
+                                            html = `<button data-gadget-type="button" style="display:block;width:80%;margin:12px auto;padding:14px 24px;background:${bg};color:${txt};border:none;border-radius:${rad}px;font-size:16px;font-weight:700;cursor:pointer;text-align:center">${newBlock.text || 'Clique aqui'}</button>`;
+                                        } else if (t === 'image') {
+                                            html = `<img data-gadget-type="image" src="${newBlock.imageUrl || 'https://placehold.co/600x200/e5e7eb/999?text=Sua+imagem'}" style="width:100%;max-width:100%;height:auto;display:block;margin:8px 0;border-radius:8px"/>`;
+                                        } else if (t === 'chart') {
+                                            const ct = newBlock.chartType || 'bar';
+                                            const color = newBlock.chartColor || '#6366f1';
+                                            const title = newBlock.title || '';
+                                            const data = newBlock.data || [{ label: 'A', value: 80 }, { label: 'B', value: 55 }, { label: 'C', value: 90 }];
+                                            const maxVal = Math.max(...data.map(d => d.value), 1);
+                                            const dataJson = JSON.stringify(data).replace(/"/g, '&quot;');
+
+                                            if (ct === 'bar') {
+                                                const barsHtml = data.map(d => {
+                                                    const pct = Math.round((d.value / maxVal) * 100);
+                                                    return `<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px"><div data-chart-bar data-target-height="${pct}%" style="width:100%;background:linear-gradient(to top,${color},${color}cc);border-radius:6px 6px 0 0;height:${pct}%"></div><span style="font-size:11px;font-weight:600">${d.label}</span></div>`;
+                                                }).join('');
+                                                html = `<div data-gadget-type="chart" data-chart-type="${ct}" data-chart-color="${color}" data-chart-data="${dataJson}" style="padding:16px;margin:10px 0">${title ? `<div style="font-size:14px;font-weight:700;margin-bottom:12px;text-align:center;color:inherit">${title}</div>` : ''}<div style="display:flex;align-items:flex-end;gap:8px;height:120px;padding:0 10px">${barsHtml}</div></div>`;
+                                            } else if (ct === 'pie' || ct === 'donut') {
+                                                const total = data.reduce((s, d) => s + d.value, 0) || 1;
+                                                const colors = [color, '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#ec4899'];
+                                                let gradParts = [], acc = 0;
+                                                data.forEach((d, i) => {
+                                                    const pct = (d.value / total) * 100;
+                                                    gradParts.push(`${colors[i % colors.length]} ${acc}% ${acc + pct}%`);
+                                                    acc += pct;
+                                                });
+                                                const inset = ct === 'donut' ? '<div style="position:absolute;inset:30%;background:#fff;border-radius:50%"></div>' : '';
+                                                html = `<div data-gadget-type="chart" data-chart-type="${ct}" data-chart-color="${color}" data-chart-data="${dataJson}" style="padding:16px;text-align:center">${title ? `<div style="font-size:14px;font-weight:700;margin-bottom:12px">${title}</div>` : ''}<div style="width:120px;height:120px;border-radius:50%;background:conic-gradient(${gradParts.join(',')});margin:0 auto;position:relative">${inset}</div><div style="display:flex;gap:8px;justify-content:center;margin-top:10px;flex-wrap:wrap">${data.map((d, i) => `<div style="display:flex;align-items:center;gap:4px;font-size:11px"><div style="width:8px;height:8px;border-radius:50%;background:${colors[i % colors.length]}"></div>${d.label}</div>`).join('')}</div></div>`;
+                                            } else if (ct === 'radial') {
+                                                const gaugeHtml = data.map((d, i) => {
+                                                    const pct = Math.min(d.value, 100);
+                                                    const colors = [color, '#f59e0b', '#10b981', '#ef4444'];
+                                                    const c = colors[i % colors.length];
+                                                    return `<div style="text-align:center"><div style="width:60px;height:60px;border-radius:50%;background:conic-gradient(${c} 0% ${pct}%,#e5e7eb ${pct}% 100%);margin:0 auto;position:relative"><div style="position:absolute;inset:25%;background:#fff;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800">${d.value}</div></div><div style="font-size:10px;font-weight:600;margin-top:4px">${d.label}</div></div>`;
+                                                }).join('');
+                                                html = `<div data-gadget-type="chart" data-chart-type="${ct}" data-chart-color="${color}" data-chart-data="${dataJson}" style="padding:16px;text-align:center">${title ? `<div style="font-size:14px;font-weight:700;margin-bottom:12px">${title}</div>` : ''}<div style="display:flex;gap:16px;justify-content:center">${gaugeHtml}</div></div>`;
+                                            } else {
+                                                // line chart fallback — use bars
+                                                const barsHtml = data.map(d => {
+                                                    const pct = Math.round((d.value / maxVal) * 100);
+                                                    return `<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px"><div data-chart-bar data-target-height="${pct}%" style="width:100%;background:linear-gradient(to top,${color},${color}cc);border-radius:6px 6px 0 0;height:${pct}%"></div><span style="font-size:11px;font-weight:600">${d.label}</span></div>`;
+                                                }).join('');
+                                                html = `<div data-gadget-type="chart" data-chart-type="${ct}" data-chart-color="${color}" data-chart-data="${dataJson}" style="padding:16px;margin:10px 0">${title ? `<div style="font-size:14px;font-weight:700;margin-bottom:12px;text-align:center;color:inherit">${title}</div>` : ''}<div style="display:flex;align-items:flex-end;gap:8px;height:120px;padding:0 10px">${barsHtml}</div></div>`;
+                                            }
+                                        } else {
+                                            html = `<div data-gadget-type="${t}" style="padding:16px;text-align:center">${newBlock.text || ''}</div>`;
+                                        }
+                                        window.__cloneEditorApi.replaceElement(path, html);
+                                        // Keep gadget selected: update cloneSelectedEl state directly
+                                        setCloneSelectedEl(prev => ({
+                                            ...prev,
+                                            ...newBlock,
+                                            gadgetType: t,
+                                            text: newBlock.text || prev?.text || '',
+                                            innerHTML: html,
+                                        }));
+                                    };
+                                    return (
+                                        <div key={cloneSelectedEl.path}>
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 12px 0' }}>
+                                                <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.4px' }}>
+                                                    Gadget • {BLOCK_TYPES.find(b => b.type === gType)?.label || gType}
+                                                </div>
+                                                <button onClick={() => setCloneSelectedEl(null)} style={{ background: '#f3f4f6', border: 'none', cursor: 'pointer', fontSize: 12, color: '#9ca3af', padding: '4px 8px', borderRadius: 6, fontWeight: 600 }}>✕</button>
+                                            </div>
+                                            <PropertiesPanel block={virtualBlock} onChange={handleGadgetChange} config={config} onConfigChange={updateConfig} steps={steps} />
+                                            <div style={{ padding: '0 12px 12px' }}>
+                                                <button
+                                                    onClick={() => {
+                                                        if (window.__cloneEditorApi) {
+                                                            window.__cloneEditorApi.deleteElement(cloneSelectedEl.path);
+                                                            setCloneSelectedEl(null);
+                                                        }
+                                                    }}
+                                                    style={{ width: '100%', padding: '8px 0', borderRadius: 8, border: '1px solid #fecaca', background: '#fef2f2', color: '#dc2626', fontWeight: 600, fontSize: '0.72rem', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}
+                                                >🗑️ Remover</button>
+                                            </div>
+                                        </div>
+                                    );
+                                })()
+                            ) : (
+                            <div style={{ padding: 14 }} key={cloneSelectedEl.path}>
+                                {/* Clean header */}
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, paddingBottom: 8, borderBottom: '1px solid #f3f4f6' }}>
+                                    <div style={{ fontSize: '0.78rem', fontWeight: 700, color: '#374151' }}>
+                                        {{ text: 'Texto', button: 'Botão', image: 'Imagem', container: 'Container', chart: 'Gráfico', input: 'Campo', 'progress-bar': '▰ Barra Progresso', 'risk-chart': '📉 Gráfico Risco', picker: cloneSelectedEl?.pickerType === 'height' ? '📏 Altura' : cloneSelectedEl?.pickerType === 'weight' ? '⚖️ Peso' : '🔢 Número' }[cloneSelectedEl.type] || 'Elemento'}
+                                    </div>
+                                    <button onClick={() => setCloneSelectedEl(null)} style={{ background: '#f3f4f6', border: 'none', cursor: 'pointer', fontSize: 12, color: '#9ca3af', padding: '4px 8px', borderRadius: 6, fontWeight: 600 }}>✕</button>
+                                </div>
+
+                                <ClonePropertiesPanel el={cloneSelectedEl} step={activeStep} config={config} onBlockChange={(nb) => updateBlock(0, nb)} />
+
+                                {/* Delete */}
+                                <button
+                                    onClick={() => {
+                                        if (window.__cloneEditorApi) {
+                                            window.__cloneEditorApi.deleteElement(cloneSelectedEl.path);
+                                            setCloneSelectedEl(null);
+                                        }
+                                    }}
+                                    style={{ width: '100%', padding: '8px 0', borderRadius: 8, border: '1px solid #fecaca', background: '#fef2f2', color: '#dc2626', fontWeight: 600, fontSize: '0.72rem', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4, marginTop: 16 }}
+                                >🗑️ Remover</button>
+
+                                {/* Language translation */}
+                                <details style={{ marginTop: 14, paddingTop: 10, borderTop: '1px solid #f3f4f6' }}>
+                                    <summary style={{ fontSize: '0.72rem', fontWeight: 700, color: '#4b5563', cursor: 'pointer', userSelect: 'none', textTransform: 'uppercase', letterSpacing: '0.4px' }}>🌐 Idioma</summary>
+                                    <div style={{ marginTop: 8, display: 'flex', gap: 4 }}>
+                                        <select id="clone-lang-select" defaultValue="es" style={{ flex: 1, padding: '6px 8px', borderRadius: 6, border: '1px solid #e5e7eb', fontSize: '0.72rem' }}>
+                                            <option value="pt">🇧🇷 Português</option>
+                                            <option value="en">🇺🇸 English</option>
+                                            <option value="es">🇪🇸 Español</option>
+                                            <option value="fr">🇫🇷 Français</option>
+                                            <option value="de">🇩🇪 Deutsch</option>
+                                            <option value="it">🇮🇹 Italiano</option>
+                                        </select>
+                                        <button
+                                            onClick={async () => {
+                                                const lang = document.getElementById('clone-lang-select')?.value;
+                                                if (!lang) return;
+                                                showToastMsg?.('🌐 Traduzindo...');
+                                                try {
+                                                    // Collect all text from all cloned steps
+                                                    const textsToTranslate = [];
+                                                    const stepMapping = []; // track which step/position each text belongs to
+                                                    steps.forEach((s, si) => {
+                                                        if (s.blocks?.[0]?.type !== 'html-script') return;
+                                                        const code = s.blocks[0].code || '';
+                                                        // Extract visible text nodes from HTML
+                                                        const tmp = document.createElement('div');
+                                                        tmp.innerHTML = code;
+                                                        const walker = document.createTreeWalker(tmp, NodeFilter.SHOW_TEXT);
+                                                        let node;
+                                                        while (node = walker.nextNode()) {
+                                                            const text = node.textContent.trim();
+                                                            if (text.length > 2 && text.length < 500 && !/^[\s\d.,:;!?@#$%^&*()_+=\-\[\]{}|\\/<>~`'"]+$/.test(text)) {
+                                                                textsToTranslate.push(text);
+                                                                stepMapping.push({ stepIdx: si, originalText: text });
+                                                            }
+                                                        }
+                                                        // Also translate step name
+                                                        if (s.name && s.name.length > 2) {
+                                                            textsToTranslate.push(s.name);
+                                                            stepMapping.push({ stepIdx: si, isName: true, originalText: s.name });
+                                                        }
+                                                    });
+
+                                                    if (textsToTranslate.length === 0) { showToastMsg?.('Nenhum texto encontrado'); return; }
+
+                                                    // Batch in chunks of 50
+                                                    const API_BASE = import.meta.env.DEV ? 'http://localhost:3001' : '';
+                                                    const chunkSize = 50;
+                                                    const allTranslated = [];
+                                                    for (let i = 0; i < textsToTranslate.length; i += chunkSize) {
+                                                        const chunk = textsToTranslate.slice(i, i + chunkSize);
+                                                        const res = await fetch(`${API_BASE}/api/translate`, {
+                                                            method: 'POST',
+                                                            headers: { 'Content-Type': 'application/json' },
+                                                            body: JSON.stringify({ texts: chunk, targetLang: lang }),
+                                                        });
+                                                        const data = await res.json();
+                                                        allTranslated.push(...(data.translated || chunk));
+                                                    }
+
+                                                    // Apply translations
+                                                    const newSteps = [...steps];
+                                                    allTranslated.forEach((translated, i) => {
+                                                        const mapping = stepMapping[i];
+                                                        if (!mapping) return;
+                                                        const step = newSteps[mapping.stepIdx];
+                                                        if (mapping.isName) {
+                                                            step.name = translated;
+                                                        } else if (step.blocks?.[0]?.code) {
+                                                            // Replace original text with translation in HTML code
+                                                            step.blocks[0].code = step.blocks[0].code.split(mapping.originalText).join(translated);
+                                                            if (step.blocks[0].fullCode) {
+                                                                step.blocks[0].fullCode = step.blocks[0].fullCode.split(mapping.originalText).join(translated);
+                                                            }
+                                                        }
+                                                    });
+                                                    setSteps(newSteps);
+                                                    showToastMsg?.(`✅ ${allTranslated.length} textos traduzidos!`);
+                                                } catch (err) {
+                                                    console.error('[Translate]', err);
+                                                    showToastMsg?.('❌ Erro ao traduzir');
+                                                }
+                                            }}
+                                            style={{ padding: '6px 12px', borderRadius: 6, border: 'none', background: '#6366f1', color: '#fff', fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap' }}
+                                        >Traduzir</button>
+                                    </div>
+                                    <div style={{ fontSize: '0.6rem', color: '#9ca3af', marginTop: 4 }}>Traduz todos os textos de todas as etapas clonadas.</div>
+                                </details>
+
+                                {/* Pixel tracking */}
+                                <details style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid #f3f4f6' }}>
+                                    <summary style={{ fontSize: '0.72rem', fontWeight: 700, color: '#4b5563', cursor: 'pointer', userSelect: 'none', textTransform: 'uppercase', letterSpacing: '0.4px' }}>📊 Pixel</summary>
+                                    <textarea
+                                        value={activeStep.blocks[0].pixelCode || ''}
+                                        onChange={e => {
+                                            updateBlock(0, { ...activeStep.blocks[0], pixelCode: e.target.value });
+                                        }}
+                                        placeholder={'Facebook Pixel, analytics, etc.'}
+                                        style={{ width: '100%', minHeight: 60, padding: '8px 10px', borderRadius: 8, border: '1px solid #e5e7eb', fontSize: '0.68rem', fontFamily: 'monospace', lineHeight: 1.5, resize: 'vertical', outline: 'none', background: '#fafafa', marginTop: 6, boxSizing: 'border-box' }}
+                                    />
+                                </details>
+                            </div>
+                            )
+                        ) : selectedBlock ? (
                             <PropertiesPanel block={selectedBlock} onChange={b => selectedBlockIdx !== null && updateBlock(selectedBlockIdx, b)} config={config} onConfigChange={updateConfig} steps={steps} />
                         ) : (
                             /* Step settings / Aparência when no block selected */
@@ -1564,115 +1962,78 @@ export default function PageBuilder() {
             {
                 showCloneModal && (
                     <div className="modal-overlay" onClick={() => !cloneLoading && setShowCloneModal(false)}>
-                        <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 580, maxHeight: '85vh', display: 'flex', flexDirection: 'column' }}>
+                        <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 520, maxHeight: '85vh', display: 'flex', flexDirection: 'column' }}>
                             <div className="modal-header">
-                                <h3 className="modal-title">Clonar Quiz</h3>
+                                <h3 className="modal-title">🔗 Clonar Quiz</h3>
                                 <button className="modal-close" onClick={() => !cloneLoading && setShowCloneModal(false)}>×</button>
                             </div>
 
                             {!cloneLoading ? (
                                 <div style={{ overflow: 'auto', flex: 1, padding: '0 0 16px' }}>
-                                    {/* Tab selector */}
-                                    <div style={{ display: 'flex', gap: 0, marginBottom: 16, background: '#f1f5f9', borderRadius: 10, padding: 3 }}>
-                                        {[{ id: 'screenshots', label: 'Screenshots' }, { id: 'json', label: 'Importar JSON' }].map(tab => (
-                                            <button key={tab.id} onClick={() => { setCloneError(null); setCloneMode(tab.id); }}
-                                                style={{
-                                                    flex: 1, padding: '8px 0', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: '0.78rem', fontWeight: 600,
-                                                    background: cloneMode === tab.id ? '#fff' : 'transparent',
-                                                    color: cloneMode === tab.id ? 'var(--primary)' : 'var(--text-muted)',
-                                                    boxShadow: cloneMode === tab.id ? '0 1px 3px rgba(0,0,0,0.1)' : 'none'
-                                                }}
-                                            >{tab.label}</button>
-                                        ))}
+                                    {/* URL Input */}
+                                    <div style={{ marginBottom: 14 }}>
+                                        <label className="label">URL do quiz</label>
+                                        <input className="input"
+                                            placeholder="https://exemplo.com/quiz"
+                                            value={cloneUrl}
+                                            onChange={e => setCloneUrl(e.target.value)}
+                                            style={{ borderRadius: 10, fontSize: '0.88rem' }}
+                                        />
                                     </div>
 
-                                    {cloneMode !== 'json' ? (
-                                        <>
-                                            {/* Upload area */}
-                                            <div
-                                                style={{
-                                                    border: '2px dashed var(--border)', borderRadius: 12, padding: cloneLog.length > 0 ? '12px' : '28px 20px',
-                                                    textAlign: 'center', cursor: 'pointer', transition: 'all 0.2s', marginBottom: 14,
-                                                    background: '#fafbfc', maxHeight: cloneLog.length > 0 ? 280 : 'none', overflowY: cloneLog.length > 0 ? 'auto' : 'visible',
-                                                }}
-                                                onDragOver={e => { e.preventDefault(); e.currentTarget.style.borderColor = 'var(--primary)'; e.currentTarget.style.background = 'var(--primary-bg)'; }}
-                                                onDragLeave={e => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.background = '#fafbfc'; }}
-                                                onDrop={e => {
-                                                    e.preventDefault();
-                                                    e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.background = '#fafbfc';
-                                                    const newFiles = [...e.dataTransfer.files].filter(f => f.type.startsWith('image/'));
-                                                    if (newFiles.length > 0) setCloneLog(prev => [...prev, ...newFiles.map(f => ({ file: f, preview: URL.createObjectURL(f), name: f.name }))]);
-                                                }}
-                                                onClick={() => {
-                                                    const inp = document.createElement('input');
-                                                    inp.type = 'file'; inp.accept = 'image/*'; inp.multiple = true;
-                                                    inp.onchange = (ev) => {
-                                                        const newFiles = [...ev.target.files].filter(f => f.type.startsWith('image/'));
-                                                        if (newFiles.length > 0) setCloneLog(prev => [...prev, ...newFiles.map(f => ({ file: f, preview: URL.createObjectURL(f), name: f.name }))]);
-                                                    };
-                                                    inp.click();
-                                                }}
-                                            >
-                                                {cloneLog.length === 0 ? (
-                                                    <>
-                                                        <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 8 }}><Upload size={36} color="var(--text-muted)" /></div>
-                                                        <div style={{ fontSize: '0.88rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: 4 }}>
-                                                            Arraste screenshots aqui
-                                                        </div>
-                                                        <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
-                                                            ou clique para selecionar imagens
-                                                        </div>
-                                                        <div style={{ fontSize: '0.68rem', color: '#94a3b8', marginTop: 8 }}>
-                                                            Tire um print de cada etapa do quiz que deseja clonar
-                                                        </div>
-                                                    </>
-                                                ) : (
-                                                    /* Thumbnail grid */
-                                                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(70px, 1fr))', gap: 8 }} onClick={e => e.stopPropagation()}>
-                                                        {cloneLog.map((item, idx) => (
-                                                            <div key={idx} style={{ position: 'relative', borderRadius: 8, overflow: 'hidden', border: '1px solid #e2e8f0', aspectRatio: '9/16', background: '#f1f5f9' }}>
-                                                                <img src={item.preview} alt={`Screenshot ${idx + 1}`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                                                                <div style={{ position: 'absolute', top: 3, left: 3, background: 'var(--primary)', color: '#fff', borderRadius: '50%', width: 18, height: 18, fontSize: '0.6rem', fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{idx + 1}</div>
-                                                                <button onClick={(e) => { e.stopPropagation(); setCloneLog(prev => prev.filter((_, i) => i !== idx)); }}
-                                                                    style={{ position: 'absolute', top: 3, right: 3, background: 'rgba(0,0,0,0.6)', color: '#fff', border: 'none', borderRadius: '50%', width: 18, height: 18, fontSize: '0.6rem', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1 }}>×</button>
-                                                            </div>
-                                                        ))}
-                                                        {/* Add more button */}
-                                                        <div
-                                                            onClick={(e) => {
-                                                                e.stopPropagation();
-                                                                const inp = document.createElement('input');
-                                                                inp.type = 'file'; inp.accept = 'image/*'; inp.multiple = true;
-                                                                inp.onchange = (ev) => {
-                                                                    const newFiles = [...ev.target.files].filter(f => f.type.startsWith('image/'));
-                                                                    if (newFiles.length > 0) setCloneLog(prev => [...prev, ...newFiles.map(f => ({ file: f, preview: URL.createObjectURL(f), name: f.name }))]);
-                                                                };
-                                                                inp.click();
-                                                            }}
-                                                            style={{ borderRadius: 8, border: '2px dashed #cbd5e1', aspectRatio: '9/16', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', fontSize: '0.6rem', color: '#94a3b8', gap: 2 }}
-                                                        >
-                                                            <span style={{ fontSize: 18 }}>+</span>
-                                                            <span>Adicionar</span>
-                                                        </div>
-                                                    </div>
-                                                )}
-                                            </div>
-                                            <div style={{ padding: '8px 12px', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 8, marginBottom: 14, fontSize: '0.7rem', color: '#166534' }}>
-                                                <Lightbulb size={14} style={{ display: 'inline', marginRight: 4 }} /> <strong>Dica:</strong> Tire prints de cada etapa do quiz (perguntas, páginas de info, resultado). A IA vai analisar cada screenshot e recriar as etapas.
-                                            </div>
-                                        </>
-                                    ) : (
-                                        <>
-                                            <div style={{ marginBottom: 10 }}>
-                                                <label className="label">Cole o JSON do quiz</label>
-                                                <textarea id="jsonImportArea" className="input"
-                                                    placeholder={'{\n  "pages": [\n    { "type": "choice", "text": "Pergunta?", "options": [...] }\n  ]\n}'}
-                                                    style={{ width: '100%', minHeight: 160, resize: 'vertical', fontFamily: 'monospace', fontSize: '0.72rem', lineHeight: 1.4 }} />
-                                            </div>
-                                            <div style={{ padding: '8px 12px', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 8, marginBottom: 14, fontSize: '0.7rem', color: '#166534' }}>
-                                                <Lightbulb size={14} style={{ display: 'inline', marginRight: 4 }} /> <strong>Dica:</strong> Exporte o JSON do dashboard do quiz e cole aqui. Aceita vários formatos.
-                                            </div>
-                                        </>
+                                    {/* Language selector */}
+                                    <div style={{ marginBottom: 14 }}>
+                                        <label className="label">🌐 Idioma do clone</label>
+                                        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                                            {[
+                                                { id: 'original', label: '🔒 Manter original', desc: '' },
+                                                { id: 'pt', label: '🇧🇷 Português', desc: '' },
+                                                { id: 'en', label: '🇺🇸 Inglês', desc: '' },
+                                                { id: 'es', label: '🇪🇸 Espanhol', desc: '' },
+                                                { id: 'fr', label: '🇫🇷 Francês', desc: '' },
+                                                { id: 'de', label: '🇩🇪 Alemão', desc: '' },
+                                            ].map(lang => (
+                                                <button key={lang.id}
+                                                    onClick={() => setCloneLang(lang.id)}
+                                                    style={{
+                                                        padding: '6px 12px', border: 'none', borderRadius: 8, cursor: 'pointer',
+                                                        fontSize: '0.72rem', fontWeight: 600,
+                                                        background: cloneLang === lang.id ? 'var(--primary)' : '#f1f5f9',
+                                                        color: cloneLang === lang.id ? '#fff' : 'var(--text-secondary)',
+                                                        boxShadow: cloneLang === lang.id ? '0 2px 6px rgba(0,0,0,.15)' : 'none',
+                                                        transition: 'all 0.15s',
+                                                    }}
+                                                >{lang.label}</button>
+                                            ))}
+                                        </div>
+                                    </div>
+
+                                    {/* How it works + Warnings */}
+                                    <div style={{ padding: '10px 12px', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 8, marginBottom: 10, fontSize: '0.7rem', color: '#166534' }}>
+                                        <Lightbulb size={14} style={{ display: 'inline', marginRight: 4 }} /> <strong>Como funciona:</strong> Nosso bot vai acessar a URL, navegar pelo quiz inteiro clicando nas opções, e clonar todas as etapas automaticamente.
+                                    </div>
+
+                                    <div style={{ padding: '10px 12px', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 8, marginBottom: 14, fontSize: '0.68rem', color: '#92400e', lineHeight: 1.6 }}>
+                                        <strong>⚠️ Avisos importantes:</strong>
+                                        <ul style={{ margin: '4px 0 0', paddingLeft: 16, display: 'flex', flexDirection: 'column', gap: 3 }}>
+                                            <li>O clone pode conter <strong>pequenos erros visuais</strong> — revise cada etapa cuidadosamente</li>
+                                            <li><strong>Etapas animadas</strong> (loading, sliders complexos) podem não funcionar corretamente — substitua pelos componentes nativos do construtor</li>
+                                            {cloneLang !== 'original' && <li><strong>Apenas textos são traduzidos</strong> — imagens com texto embutido precisam ser alteradas manualmente</li>}
+                                            <li>Botões e links clonados precisam ser <strong>reconfigurados manualmente</strong></li>
+                                        </ul>
+                                    </div>
+
+                                    {/* Clone progress log */}
+                                    {cloneLog.length > 0 && (
+                                        <div style={{ border: '1px solid #e2e8f0', borderRadius: 10, padding: '10px 12px', marginBottom: 14, maxHeight: 200, overflowY: 'auto', background: '#fafbfc' }}>
+                                            <div style={{ fontSize: '0.72rem', fontWeight: 600, color: 'var(--text-muted)', marginBottom: 6 }}>Progresso do clone:</div>
+                                            {cloneLog.map((item, idx) => (
+                                                <div key={idx} style={{ fontSize: '0.72rem', color: 'var(--text-primary)', padding: '3px 0', display: 'flex', gap: 6, alignItems: 'flex-start' }}>
+                                                    <span style={{ flexShrink: 0 }}>{item.icon || '📄'}</span>
+                                                    <span>{item.msg}</span>
+                                                </div>
+                                            ))}
+                                        </div>
                                     )}
 
                                     {cloneError && (
@@ -1682,94 +2043,52 @@ export default function PageBuilder() {
                                     <div style={{ display: 'flex', gap: 8 }}>
                                         <button className="btn btn-ghost" style={{ flex: 1 }} onClick={() => setShowCloneModal(false)}>Cancelar</button>
                                         <button className="btn btn-accent" style={{ flex: 2 }}
-                                            disabled={cloneMode !== 'json' ? cloneLog.length === 0 : false}
+                                            disabled={!cloneUrl.trim()}
                                             onClick={async () => {
                                                 setCloneError(null);
-                                                if (cloneMode === 'json') {
-                                                    const raw = document.getElementById('jsonImportArea')?.value?.trim();
-                                                    if (!raw) { setCloneError('Cole o JSON primeiro.'); return; }
-                                                    try {
-                                                        const data = JSON.parse(raw);
-                                                        let pages = [], quizName = data.name || data.quizName || data.title || 'Quiz Importado', results = data.results || [];
-                                                        if (data.pages && Array.isArray(data.pages)) pages = data.pages;
-                                                        else if (data.steps && Array.isArray(data.steps)) {
-                                                            const ns = data.steps.map((s, i) => ({ id: `stp_j_${Date.now()}_${i}`, name: s.name || `Etapa ${i + 1}`, blocks: s.blocks || [s] }));
-                                                            setSteps(ns); setActiveStepIdx(0); setSelectedBlockIdx(null);
-                                                            setConfig(c => ({ ...c, name: quizName }));
-                                                            if (results.length) setClonedResults(results);
-                                                            showToastMsg(`${ns.length} etapas importadas!`);
-                                                            setShowCloneModal(false); return;
-                                                        }
-                                                        else if (data.screens && Array.isArray(data.screens)) {
-                                                            pages = data.screens.map(s => {
-                                                                const comps = s.components || s.layers || [];
-                                                                const textC = comps.find(c => c.type === 'text' || c.type === 'title');
-                                                                const optC = comps.find(c => c.type === 'options' || c.type === 'buttons');
-                                                                return { type: optC ? 'choice' : 'insight', text: textC?.content || s.name || '', options: optC?.items?.map((o, j) => ({ text: o.text || '', weight: j + 1 })) || [] };
-                                                            });
-                                                        }
-                                                        else if (Array.isArray(data)) {
-                                                            pages = data.map(item => ({ type: item.type || 'choice', text: item.question || item.text || '', options: (item.options || item.answers || []).map((o, j) => ({ text: typeof o === 'string' ? o : (o.text || ''), weight: j + 1 })) }));
-                                                        }
-                                                        if (!pages.length) { setCloneError('Formato não reconhecido.'); return; }
-                                                        const ns = pages.map((p, i) => ({ id: `stp_j_${Date.now()}_${i}`, name: (p.text || '').slice(0, 25) || `Etapa ${i + 1}`, blocks: [p] }));
-                                                        setSteps(ns); setActiveStepIdx(0); setSelectedBlockIdx(null);
-                                                        setConfig(c => ({ ...c, name: quizName, primaryColor: data.primaryColor || c.primaryColor }));
-                                                        if (results.length) setClonedResults(results);
-                                                        showToastMsg(`${ns.length} etapas importadas!`);
-                                                        setShowCloneModal(false);
-                                                    } catch (e) { setCloneError('JSON inválido: ' + e.message); }
-                                                    return;
-                                                }
-
-                                                // Screenshot mode
-                                                if (cloneLog.length === 0) { setCloneError('Adicione pelo menos 1 screenshot.'); return; }
+                                                if (!cloneUrl.trim()) { setCloneError('Cole a URL do quiz.'); return; }
                                                 setCloneLoading(true);
-                                                setCloneProgress({ stage: 'uploading', msg: `Enviando ${cloneLog.length} screenshots...`, pct: 5 });
-                                                let success = false;
+                                                setCloneLog([]);
+                                                setCloneProgress({ stage: 'connecting', msg: 'Conectando ao servidor...', pct: 5 });
                                                 try {
-                                                    const API_BASE = import.meta.env.DEV ? 'http://localhost:3001' : '';
-                                                    const formData = new FormData();
-                                                    for (const item of cloneLog) {
-                                                        formData.append('screenshots', item.file);
-                                                    }
-                                                    const res = await fetch(`${API_BASE}/api/clone-screenshots`, {
-                                                        method: 'POST',
-                                                        body: formData,
-                                                    });
-                                                    if (!res.ok) {
-                                                        const errData = await res.json().catch(() => ({}));
-                                                        throw new Error(errData.error || `Erro ${res.status}`);
-                                                    }
-                                                    const result = await res.json();
-                                                    const pages = result.pages || [];
-                                                    if (pages.length > 0) {
-                                                        const ns = pages.map((p, i) => ({
-                                                            id: `stp_ss_${Date.now()}_${i}`,
-                                                            name: (p.text || '').replace(/\n/g, ' ').slice(0, 25) || `Etapa ${i + 1}`,
-                                                            blocks: [{
-                                                                type: p.type || 'choice',
-                                                                text: p.text || '',
-                                                                options: (p.options || []).map((o, j) => ({
-                                                                    text: o.text || '', emoji: o.emoji || '', weight: j + 1
-                                                                })),
-                                                            }]
-                                                        }));
+                                                    const quiz = await cloneAndOptimize(cloneUrl, 'outro', 'clone_only', '', (stage, msg, data) => {
+                                                        setCloneProgress({ stage, msg, pct: data?.pct || 0 });
+                                                        if (data?.pageNum) {
+                                                            setCloneLog(prev => {
+                                                                const exists = prev.some(p => p.key === `page-${data.pageNum}`);
+                                                                if (exists) return prev;
+                                                                return [...prev, { key: `page-${data.pageNum}`, icon: data.pageType === 'welcome' ? '🏠' : data.pageType === 'lead' ? '📧' : '✅', msg }];
+                                                            });
+                                                        } else {
+                                                            setCloneLog(prev => [...prev, { key: `stage-${stage}-${Date.now()}`, icon: stage === 'connecting' ? '🌐' : stage === 'building' ? '🧱' : stage === 'complete' ? '✅' : '🔍', msg }]);
+                                                        }
+                                                    }, cloneLang);
+                                                    if (quiz && quiz.pages?.length > 0) {
+                                                        const ns = quiz.pages.map((p, i) => {
+                                                            if (p.type === 'compound' && p.blocks) return { id: `stp_url_${Date.now()}_${i}`, name: `Etapa ${i + 1}`, blocks: p.blocks };
+                                                            return {
+                                                                id: `stp_url_${Date.now()}_${i}`,
+                                                                name: (p.text || p.headline || '').replace(/\n/g, ' ').slice(0, 25) || `Etapa ${i + 1}`,
+                                                                blocks: [p]
+                                                            };
+                                                        });
                                                         setSteps(ns); setActiveStepIdx(0); setSelectedBlockIdx(null);
-                                                        setConfig(c => ({ ...c, name: 'Quiz Clonado' }));
-                                                        showToastMsg(`${ns.length} etapas extraídas dos screenshots!`);
-                                                        success = true;
+                                                        setConfig(c => ({ ...c, name: quiz.name || 'Quiz Clonado', primaryColor: quiz.primaryColor || c.primaryColor, niche: quiz.niche || c.niche, welcomeHeadline: quiz.welcome?.headline || '', welcomeSub: quiz.welcome?.subheadline || '', welcomeCta: quiz.welcome?.cta || 'Começar →' }));
+                                                        if (quiz.results?.length) setClonedResults(quiz.results);
+                                                        if (quiz.clonedCSS) setClonedCSS(quiz.clonedCSS);
+                                                        setIsClone(true);
+                                                        showToastMsg(`🎉 ${ns.length} etapas clonadas da URL!`);
+                                                        setShowCloneModal(false); setCloneLog([]); setCloneUrl('');
                                                     } else {
-                                                        setCloneError('Nenhuma etapa extraída. Tente com screenshots mais claros.');
+                                                        setCloneError('Nenhuma etapa foi encontrada. Tente outra URL.');
                                                     }
                                                 } catch (err) {
-                                                    setCloneError(err.message || 'Erro ao processar screenshots.');
+                                                    setCloneError(err.message || 'Erro ao clonar da URL.');
                                                 }
                                                 setCloneLoading(false);
-                                                if (success) { setCloneLog([]); setShowCloneModal(false); }
                                             }}
                                         >
-                                            {cloneMode === 'json' ? 'Importar JSON' : `Analisar ${cloneLog.length} Screenshot${cloneLog.length !== 1 ? 's' : ''}`}
+                                            {cloneLang !== 'original' ? `🌐 Clonar e Traduzir` : '🔗 Clonar da URL'}
                                         </button>
                                     </div>
                                 </div>
@@ -1781,13 +2100,13 @@ export default function PageBuilder() {
                                         <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 26 }}>🔍</div>
                                     </div>
                                     <div style={{ fontSize: '0.95rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: 6 }}>
-                                        {cloneProgress.msg || 'Analisando screenshots...'}
+                                        {cloneProgress.msg || 'Clonando quiz...'}
                                     </div>
                                     <div style={{ width: '80%', margin: '0 auto', height: 5, background: '#e2e8f0', borderRadius: 5, overflow: 'hidden' }}>
                                         <div style={{ height: '100%', background: 'linear-gradient(90deg, var(--primary), #10b981)', borderRadius: 5, transition: 'width 0.5s ease', width: `${cloneProgress.pct || 10}%` }} />
                                     </div>
                                     <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: 10 }}>
-                                        A IA está analisando cada screenshot • ~5s por imagem
+                                        O bot está navegando pelo quiz e clonando cada etapa
                                     </div>
                                 </div>
                             )}

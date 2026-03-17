@@ -36,8 +36,16 @@
   --shadow-glow: none;
   --transition: 0.15s ease;
   --sidebar-width: 400px;
-  --right-panel-width: 280px;
+  --right-panel-width: 320px;
   --topbar-height: 52px;
+  /* Gradient tokens */
+  --gradient-brand: linear-gradient(135deg, #6366f1, #8b5cf6);
+  --gradient-brand-hover: linear-gradient(135deg, #4f46e5, #7c3aed);
+  --gradient-warm: linear-gradient(135deg, #f59e0b, #ef4444);
+  --gradient-cool: linear-gradient(135deg, #06b6d4, #3b82f6);
+  --gradient-success: linear-gradient(135deg, #10b981, #059669);
+  --gradient-purple: linear-gradient(135deg, #8b5cf6, #d946ef);
+  --gradient-surface: linear-gradient(135deg, rgba(99,102,241,0.05), rgba(139,92,246,0.05));
 }
 
 html,
@@ -55,6 +63,157 @@ body {
   -webkit-font-smoothing: antialiased;
   overflow-x: hidden;
 }
+
+/* ─── Glassmorphism ─── */
+.glass {
+  background: rgba(255, 255, 255, 0.6);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+}
+
+.glass-dark {
+  background: rgba(15, 23, 42, 0.6);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+/* ─── Skeleton Loading ─── */
+@keyframes shimmer {
+  0% { background-position: -400px 0; }
+  100% { background-position: 400px 0; }
+}
+
+.skeleton {
+  background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
+  background-size: 800px 100%;
+  animation: shimmer 1.5s ease infinite;
+  border-radius: var(--radius-sm);
+}
+
+.skeleton-text { height: 14px; margin-bottom: 8px; }
+.skeleton-title { height: 20px; width: 60%; margin-bottom: 12px; }
+.skeleton-card { height: 100px; border-radius: var(--radius-lg); }
+
+/* ─── Stagger Animations ─── */
+@keyframes staggerIn {
+  from { opacity: 0; transform: translateY(16px) scale(0.97); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.stagger-in { animation: staggerIn 0.4s ease both; }
+.stagger-in:nth-child(1) { animation-delay: 0s; }
+.stagger-in:nth-child(2) { animation-delay: 0.05s; }
+.stagger-in:nth-child(3) { animation-delay: 0.1s; }
+.stagger-in:nth-child(4) { animation-delay: 0.15s; }
+.stagger-in:nth-child(5) { animation-delay: 0.2s; }
+.stagger-in:nth-child(6) { animation-delay: 0.25s; }
+.stagger-in:nth-child(7) { animation-delay: 0.3s; }
+.stagger-in:nth-child(8) { animation-delay: 0.35s; }
+.stagger-in:nth-child(9) { animation-delay: 0.4s; }
+.stagger-in:nth-child(10) { animation-delay: 0.45s; }
+
+/* ─── Premium Toast ─── */
+@keyframes toastSlideUp {
+  from { opacity: 0; transform: translate(-50%, 20px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
+
+@keyframes toastSlideOut {
+  from { opacity: 1; transform: translate(-50%, 0); }
+  to { opacity: 0; transform: translate(-50%, 20px); }
+}
+
+.toast {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 12px 20px;
+  border-radius: 12px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  animation: toastSlideUp 0.3s ease;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.2);
+}
+
+.toast-success { background: #059669; color: #fff; }
+.toast-error { background: #dc2626; color: #fff; }
+.toast-info { background: #1e293b; color: #fff; }
+
+/* ─── Stat Card Premium ─── */
+.stat-card-premium {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 20px;
+  position: relative;
+  overflow: hidden;
+  transition: all 0.2s ease;
+}
+
+.stat-card-premium::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+}
+
+.stat-card-premium:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.08);
+}
+
+/* ─── Hover Card Actions ─── */
+.card-actions-overlay {
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: linear-gradient(180deg, transparent 40%, rgba(0,0,0,0.6) 100%);
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  border-radius: var(--radius-lg);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 12px;
+  gap: 6px;
+}
+
+.card-actions-overlay:hover { opacity: 1; }
+
+/* ─── Pulse dot (for live/active) ─── */
+@keyframes pulseDot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(1.5); }
+}
+
+.pulse-dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: #10b981;
+  animation: pulseDot 2s ease infinite;
+}
+
+/* Quiz card selection checkbox visibility on hover */
+.stagger-in:hover .quiz-select-btn {
+  opacity: 1 !important;
+}
+
+/* ─── Number counter animation ─── */
+@keyframes countUp {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.count-up { animation: countUp 0.5s ease both; }
 
 ::-webkit-scrollbar {
   width: 5px;
@@ -522,6 +681,11 @@ a {
   }
 }
 
+@keyframes slideDown {
+  from { opacity: 0; transform: translateY(-8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
 .animate-in {
   animation: fadeIn 0.25s ease both;
 }
@@ -660,6 +824,7 @@ a {
   background: #fff;
   border-left: 1px solid var(--border);
   overflow-y: auto;
+  overflow-x: hidden;
   flex-shrink: 0;
 }
 

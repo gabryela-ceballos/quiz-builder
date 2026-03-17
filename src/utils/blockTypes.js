@@ -30,6 +30,7 @@ export const BLOCK_TYPES = [
     { type: 'notification', label: 'Notificação', icon: '🔔', color: '#f59e0b', category: 'attention', desc: 'Toast notification' },
     { type: 'timer', label: 'Timer', icon: '⏱', color: '#ef4444', category: 'attention', desc: 'Contagem regressiva' },
     { type: 'loading', label: 'Loading', icon: '◐', color: '#6b7280', category: 'attention', desc: 'Animação de loading' },
+    { type: 'progress-bar', label: 'Barra Progresso', icon: '▰', color: '#10b981', category: 'attention', desc: 'Barra animada 0→100%' },
     { type: 'level', label: 'Nível', icon: '≡', color: '#6b7280', category: 'attention', desc: 'Barra de nível' },
 
     // ── Argumentação ──
@@ -44,6 +45,7 @@ export const BLOCK_TYPES = [
     { type: 'bmi', label: 'IMC', icon: '📊', color: '#2563eb', category: 'charts', desc: 'Índice de massa corporal' },
     { type: 'metrics', label: 'Métricas', icon: '📐', color: '#2563eb', category: 'charts', desc: 'TMB, GEB, Peso Ideal...' },
     { type: 'chart', label: 'Gráficos', icon: '📈', color: '#2563eb', category: 'charts', desc: 'Dados visuais' },
+    { type: 'risk-chart', label: 'Gráfico Risco', icon: '📉', color: '#ef4444', category: 'charts', desc: 'Curva animada de risco' },
 
     // ── Personalização ──
     { type: 'logo', label: 'Logo', icon: '◎', color: '#6366f1', category: 'customization', desc: 'Logo centralizado (topo ou rodapé)' },
@@ -206,6 +208,8 @@ export function createBlock(type) {
             return { ...base, duration: 300, title: 'Oferta expira em:', timerFormat: 'digital', autoAdvance: true };
         case 'loading':
             return { ...base, title: 'Analisando suas respostas...', duration: 3, loadingStyle: 'steps', items: ['Calculando perfil...', 'Gerando recomendações...', 'Preparando resultado...'] };
+        case 'progress-bar':
+            return { ...base, title: 'Analisando seu perfil com base nas respostas', duration: 5, items: ['Calculando compatibilidade...', 'Processando dados...', 'Gerando recomendações...', 'Preparando resultado personalizado...'] };
         case 'level':
             return { ...base, title: 'Seu nível', value: 3, maxValue: 5, label: 'Intermediário', color: '#f59e0b' };
         case 'price':
@@ -236,6 +240,8 @@ export function createBlock(type) {
             return { ...base, title: 'Seu IMC', text: 'Resultado calculado com base nas suas respostas' };
         case 'metrics':
             return { ...base, metricType: 'tmb', title: 'Sua Métrica', text: 'Calculado com base nas respostas' };
+        case 'risk-chart':
+            return { ...base, title: 'Seu nível de risco', labels: ['Baixo', 'Aceitável', 'Normal', 'Médio', 'Alto'], userPosition: 3, duration: 3 };
         case 'spacer':
             return { ...base, height: 40 };
         case 'html-script':

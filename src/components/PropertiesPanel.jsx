@@ -331,6 +331,21 @@ export default function PropertiesPanel({ block, onChange, config, onConfigChang
 
                     {/* Scroll Picker */}
                     {block.type === 'scroll-picker' && (<>
+                        <div style={S.section}><div style={S.sTitle}>Estilo Visual</div>
+                            <div style={{ display: 'flex', gap: 4 }}>
+                                {[
+                                    { id: 'drum', label: 'Roleta', icon: '🎰' },
+                                    { id: 'ruler', label: 'Régua', icon: '📏' },
+                                    { id: 'slider', label: 'Slider', icon: '🎚️' },
+                                    { id: 'input', label: 'Input', icon: '🔢' },
+                                ].map(v => (
+                                    <div key={v.id} style={{ ...S.chip((block.visualStyle || 'drum') === v.id), display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, padding: '8px 4px' }} onClick={() => u('visualStyle', v.id)}>
+                                        <span style={{ fontSize: 16 }}>{v.icon}</span>
+                                        <span style={{ fontSize: 9 }}>{v.label}</span>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
                         <div style={S.section}><div style={S.sTitle}>Pergunta</div><input style={S.input} value={block.text || ''} onChange={e => u('text', e.target.value)} placeholder="Qual é a sua altura?" /></div>
                         <div style={S.section}><div style={S.sTitle}>Unidade</div><input style={S.input} value={block.unit || ''} onChange={e => u('unit', e.target.value)} placeholder="cm" /></div>
                         <div style={{ display: 'flex', gap: 6 }}>
@@ -383,6 +398,21 @@ export default function PropertiesPanel({ block, onChange, config, onConfigChang
 
                     {/* Weight Picker */}
                     {block.type === 'weight-picker' && (<>
+                        <div style={S.section}><div style={S.sTitle}>Estilo Visual</div>
+                            <div style={{ display: 'flex', gap: 4 }}>
+                                {[
+                                    { id: 'drum', label: 'Roleta', icon: '🎰' },
+                                    { id: 'ruler', label: 'Régua', icon: '📏' },
+                                    { id: 'slider', label: 'Slider', icon: '🎚️' },
+                                    { id: 'input', label: 'Input', icon: '🔢' },
+                                ].map(v => (
+                                    <div key={v.id} style={{ ...S.chip((block.visualStyle || 'drum') === v.id), display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, padding: '8px 4px' }} onClick={() => u('visualStyle', v.id)}>
+                                        <span style={{ fontSize: 16 }}>{v.icon}</span>
+                                        <span style={{ fontSize: 9 }}>{v.label}</span>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
                         <div style={S.section}><div style={S.sTitle}>Unidade</div><input style={S.input} value={block.unit || ''} onChange={e => u('unit', e.target.value)} placeholder="kg" /></div>
                         <div style={{ display: 'flex', gap: 6 }}>
                             <div style={{ ...S.section, flex: 1 }}><div style={S.sTitle}>Mín</div><input type="number" style={S.input} value={block.min || 30} onChange={e => u('min', Number(e.target.value))} /></div>
@@ -500,10 +530,36 @@ export default function PropertiesPanel({ block, onChange, config, onConfigChang
                         <div style={S.section}><div style={S.sTitle}>Texto alternativo</div><input style={S.input} value={block.alt || ''} onChange={e => u('alt', e.target.value)} placeholder="Logo da empresa" /></div>
                     </>)}
 
-                    {/* HTML/Script */}
+                    {/* HTML/Script — Visual Preview + Code Editor */}
                     {block.type === 'html-script' && (<>
-                        <div style={S.section}><div style={S.sTitle}>Código HTML/JS</div><textarea style={{ ...S.textarea, minHeight: 120, fontFamily: 'monospace', fontSize: '0.75rem' }} value={block.code || ''} onChange={e => u('code', e.target.value)} placeholder="<div>...</div>" /></div>
-                        <div style={S.section}><label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.78rem', color: 'var(--text-secondary)', cursor: 'pointer' }}><input type="checkbox" checked={block.executeOnLoad !== false} onChange={e => u('executeOnLoad', e.target.checked)} style={{ accentColor: 'var(--primary)' }} />Executar ao carregar</label></div>
+                        <div style={{ padding: '8px 10px', background: '#eef2ff', borderRadius: 10, marginBottom: 12, border: '1px solid #c7d2fe' }}>
+                            <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#4f46e5', marginBottom: 2 }}>🔗 Página Clonada</div>
+                            <div style={{ fontSize: '0.63rem', color: '#6366f1' }}>Esta página foi clonada de uma URL externa</div>
+                        </div>
+                        {/* Preview */}
+                        <div style={S.section}>
+                            <div style={S.sTitle}>Preview</div>
+                            <div style={{ borderRadius: 10, overflow: 'hidden', border: '1px solid #e2e8f0', background: '#fff' }}>
+                                {block.code ? (
+                                    <iframe
+                                        srcDoc={block.code}
+                                        title="Preview"
+                                        sandbox="allow-same-origin"
+                                        style={{ width: '100%', height: 240, border: 'none', background: '#fff' }}
+                                        scrolling="auto"
+                                    />
+                                ) : (
+                                    <div style={{ height: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#a0aec0', fontSize: 13 }}>Sem conteúdo</div>
+                                )}
+                            </div>
+                        </div>
+                        {/* Code Editor (collapsed by default) */}
+                        <div style={S.section}>
+                            <details>
+                                <summary style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-secondary)', cursor: 'pointer', userSelect: 'none' }}>✏️ Editar código HTML</summary>
+                                <textarea style={{ ...S.textarea, minHeight: 160, fontFamily: 'monospace', fontSize: '0.72rem', marginTop: 8, lineHeight: 1.5 }} value={block.code || ''} onChange={e => u('code', e.target.value)} placeholder="<div>...</div>" />
+                            </details>
+                        </div>
                     </>)}
 
                     {/* Metrics */}

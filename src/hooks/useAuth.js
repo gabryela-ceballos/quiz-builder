@@ -95,3 +95,33 @@ export async function getAiUsage() {
     const res = await fetch(`${API}/admin/ai-usage`, { headers: authHeaders() });
     return await res.json();
 }
+
+// ── Subscription helpers ──
+export async function getSubscription() {
+    const res = await fetch(`${API}/subscription`, { headers: authHeaders() });
+    if (!res.ok) return null;
+    return await res.json();
+}
+
+export async function getPlans() {
+    const res = await fetch(`${API}/plans`);
+    return await res.json();
+}
+
+export async function checkQuota(action) {
+    const res = await fetch(`${API}/subscription/check`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify({ action }),
+    });
+    return await res.json();
+}
+
+export async function consumeQuota(action) {
+    const res = await fetch(`${API}/subscription/consume`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify({ action }),
+    });
+    return await res.json();
+}

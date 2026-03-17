@@ -7,6 +7,11 @@ const API_BASE = import.meta.env.DEV ? 'http://localhost:3001' : '';
 function buildPlayerQuiz(extracted) {
     const pages = (extracted.pages || []).map((p, i) => {
         const page = { ...p, id: `p_clone_${i}`, sectionIndex: 0 };
+        // Preserve visual properties from AI analysis
+        if (p.bgColor) page.bgColor = p.bgColor;
+        if (p.textColor) page.textColor = p.textColor;
+        if (p.optionLayout) page.optionLayout = p.optionLayout;
+        if (p.imageUrl) page.imageUrl = p.imageUrl;
         if (page.options) {
             page.options = page.options.map((o, j) => {
                 if (typeof o === 'string') return { text: o, emoji: '', weight: j + 1 };
@@ -53,6 +58,7 @@ function buildPlayerQuiz(extracted) {
         sections: [{ label: 'Quiz Clonado', startIndex: 0 }],
         welcome: extracted.welcome || { headline: extracted.quizName || 'Quiz', subheadline: '', cta: 'Começar →' },
         pages,
+        clonedCSS: extracted.clonedCSS || null,
         questions,
         results,
         collectLead: extracted.collectLead ?? true,
@@ -63,11 +69,12 @@ function buildPlayerQuiz(extracted) {
 }
 
 // ═══ Clone via SSE stream (real-time progress) ═══
-export async function cloneAndOptimize(url, niche, mode, productDescription, onProgress) {
+export async function cloneAndOptimize(url, niche, mode, productDescription, onProgress, cloneLang) {
     if (!url?.trim()) throw new Error('URL inválida');
 
     return new Promise((resolve, reject) => {
         const params = new URLSearchParams({ url: url.trim() });
+        if (cloneLang && cloneLang !== 'original') params.set('lang', cloneLang);
         const evtSource = new EventSource(`${API_BASE}/api/clone-stream?${params}`);
         let quizData = null;
 

@@ -121,31 +121,212 @@ function LoadingBlock({ title, items, T, onDone }) {
   );
 }
 
+// ═══ PROGRESS BAR BLOCK (animated 0→100% with checklist) ═══
+function ProgressBarBlock({ title, items, duration, T, onDone }) {
+  const [pct, setPct] = useState(0);
+  const [currentItem, setCurrentItem] = useState(0);
+  const allItems = items || [];
+  const totalDuration = (duration || 5) * 1000; // ms
+
+  useEffect(() => {
+    const startTime = Date.now();
+    const interval = setInterval(() => {
+      const elapsed = Date.now() - startTime;
+      const progress = Math.min(100, Math.round((elapsed / totalDuration) * 100));
+      setPct(progress);
+      // Update current checklist item based on progress
+      if (allItems.length > 0) {
+        const itemIdx = Math.min(allItems.length - 1, Math.floor((progress / 100) * allItems.length));
+        setCurrentItem(itemIdx);
+      }
+      if (progress >= 100) {
+        clearInterval(interval);
+        setTimeout(onDone, 600);
+      }
+    }, 50);
+    return () => clearInterval(interval);
+  }, [totalDuration, allItems.length]);
+
+  return (
+    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '20px 16px' }}>
+      <h3 style={{ fontSize: '1.1rem', fontWeight: 700, color: T.text, marginBottom: 20, textAlign: 'center' }}>{title || 'Analisando...'}</h3>
+      
+      {/* Progress bar */}
+      <div style={{ width: '100%', maxWidth: 360, marginBottom: 8 }}>
+        <div style={{ height: 14, background: T.border || '#e5e7eb', borderRadius: 7, overflow: 'hidden', position: 'relative' }}>
+          <div style={{
+            height: '100%', width: `${pct}%`, borderRadius: 7,
+            background: `linear-gradient(90deg, ${T.primary}, ${T.primary}cc)`,
+            transition: 'width 0.15s ease-out',
+            boxShadow: `0 0 8px ${T.primary}40`,
+          }} />
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 4 }}>
+          <span style={{ fontSize: '0.9rem', fontWeight: 800, color: T.primary }}>{pct}%</span>
+        </div>
+      </div>
+      
+      {/* Checklist items */}
+      {allItems.length > 0 && (
+        <div style={{ width: '100%', maxWidth: 360, marginTop: 12 }}>
+          {allItems.map((item, i) => {
+            const done = i < currentItem || (i === currentItem && pct >= 100);
+            const active = i === currentItem && pct < 100;
+            return (
+              <div key={i} style={{
+                display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8, padding: '6px 0',
+                opacity: done ? 1 : active ? 1 : 0.35,
+                transition: 'opacity 0.4s, transform 0.3s',
+                transform: active ? 'translateX(4px)' : 'none',
+              }}>
+                <span style={{
+                  width: 22, height: 22, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontSize: '0.7rem', fontWeight: 700, flexShrink: 0, transition: 'all 0.3s',
+                  background: done ? T.primary : active ? `${T.primary}20` : T.border,
+                  color: done ? '#fff' : active ? T.primary : T.textMuted,
+                  border: active ? `2px solid ${T.primary}` : '2px solid transparent',
+                }}>
+                  {done ? '✓' : active ? (
+                    <span style={{ width: 8, height: 8, borderRadius: '50%', border: `2px solid ${T.primary}`, borderTopColor: 'transparent', animation: 'spin 0.8s linear infinite', display: 'block' }} />
+                  ) : '○'}
+                </span>
+                <span style={{ fontSize: '0.88rem', color: done ? T.text : active ? T.text : T.textMuted, fontWeight: active ? 600 : 400 }}>{item}</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══ RISK CHART BLOCK (animated area chart) ═══
+function RiskChartBlock({ title, labels, userPosition, duration, T, onDone }) {
+  const [progress, setProgress] = useState(0);
+  const allLabels = labels || ['Baixo', 'Aceitável', 'Normal', 'Médio', 'Alto'];
+  const userIdx = Math.min((userPosition || 3) - 1, allLabels.length - 1);
+  const totalDuration = (duration || 3) * 1000;
+
+  // Curve points (exponential-ish rise)
+  const curveValues = [0.08, 0.18, 0.35, 0.62, 0.95];
+  const W = 320, H = 180, padL = 10, padR = 10, padT = 30, padB = 30;
+  const chartW = W - padL - padR;
+  const chartH = H - padT - padB;
+
+  useEffect(() => {
+    const start = Date.now();
+    const iv = setInterval(() => {
+      const p = Math.min(1, (Date.now() - start) / totalDuration);
+      setProgress(p);
+      if (p >= 1) { clearInterval(iv); setTimeout(onDone, 1200); }
+    }, 30);
+    return () => clearInterval(iv);
+  }, [totalDuration]);
+
+  // Build path with animation
+  const points = curveValues.map((v, i) => ({
+    x: padL + (i / (curveValues.length - 1)) * chartW,
+    y: padT + chartH - (v * progress * chartH),
+  }));
+
+  const pathD = points.reduce((d, p, i) => {
+    if (i === 0) return `M ${p.x} ${p.y}`;
+    const prev = points[i - 1];
+    const cpx1 = prev.x + (p.x - prev.x) * 0.5;
+    const cpx2 = prev.x + (p.x - prev.x) * 0.5;
+    return `${d} C ${cpx1} ${prev.y} ${cpx2} ${p.y} ${p.x} ${p.y}`;
+  }, '');
+
+  const areaD = `${pathD} L ${points[points.length - 1].x} ${padT + chartH} L ${points[0].x} ${padT + chartH} Z`;
+
+  return (
+    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
+      <h3 style={{ fontSize: '1rem', fontWeight: 700, color: T.text, marginBottom: 16, textAlign: 'center' }}>{title || 'Seu nível de risco'}</h3>
+      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', maxWidth: 380 }}>
+        <defs>
+          <linearGradient id="riskGrad" x1="0" x2="1" y1="0" y2="0">
+            <stop offset="0%" stopColor="#22c55e" />
+            <stop offset="30%" stopColor="#eab308" />
+            <stop offset="60%" stopColor="#f97316" />
+            <stop offset="100%" stopColor="#ef4444" />
+          </linearGradient>
+          <linearGradient id="riskGradFill" x1="0" x2="1" y1="0" y2="0">
+            <stop offset="0%" stopColor="#22c55e" stopOpacity="0.35" />
+            <stop offset="30%" stopColor="#eab308" stopOpacity="0.35" />
+            <stop offset="60%" stopColor="#f97316" stopOpacity="0.35" />
+            <stop offset="100%" stopColor="#ef4444" stopOpacity="0.35" />
+          </linearGradient>
+        </defs>
+        {/* Grid lines */}
+        {allLabels.map((_, i) => {
+          const x = padL + (i / (allLabels.length - 1)) * chartW;
+          return <line key={i} x1={x} y1={padT} x2={x} y2={padT + chartH} stroke={T.border || '#334155'} strokeWidth="0.5" strokeDasharray="3,3" />;
+        })}
+        <line x1={padL} y1={padT + chartH} x2={padL + chartW} y2={padT + chartH} stroke={T.border || '#475569'} strokeWidth="1" />
+        {/* Animated area */}
+        <path d={areaD} fill="url(#riskGradFill)" />
+        {/* Animated line */}
+        <path d={pathD} fill="none" stroke="url(#riskGrad)" strokeWidth="3" strokeLinecap="round" />
+        {/* Data points */}
+        {points.map((p, i) => (
+          <circle key={i} cx={p.x} cy={p.y} r={i === userIdx ? 6 : 4}
+            fill={i === userIdx ? '#fff' : 'url(#riskGrad)'} stroke={i === userIdx ? T.primary : 'none'} strokeWidth={i === userIdx ? 2 : 0}
+            style={{ opacity: progress > 0.1 ? 1 : 0, transition: 'opacity 0.3s' }}
+          />
+        ))}
+        {/* User label */}
+        {progress > 0.5 && (
+          <g style={{ opacity: Math.min(1, (progress - 0.5) * 4) }}>
+            <rect x={points[userIdx].x - 22} y={points[userIdx].y - 28} width="44" height="20" rx="10" fill={T.primary} />
+            <text x={points[userIdx].x} y={points[userIdx].y - 15} textAnchor="middle" fill="#fff" fontSize="10" fontWeight="700">Você</text>
+          </g>
+        )}
+        {/* X-axis labels */}
+        {allLabels.map((label, i) => (
+          <text key={i} x={padL + (i / (allLabels.length - 1)) * chartW} y={H - 6} textAnchor="middle"
+            fill={T.textMuted || '#94a3b8'} fontSize="9" fontWeight="500">{label}</text>
+        ))}
+      </svg>
+    </div>
+  );
+}
+
 // ═══ SCROLL PICKER BLOCK (drum roller) ═══
 function ScrollPickerBlock({ page, T, onDone }) {
   const min = page.min || 140;
   const max = page.max || 210;
   const unit = page.unit || 'cm';
+  const visualStyle = page.visualStyle || 'drum';
   const [value, setValue] = useState(page.defaultValue || Math.round((min + max) / 2));
   const containerRef = useRef(null);
   const isDragging = useRef(false);
   const lastY = useRef(0);
+  const lastX = useRef(0);
 
   const items = [];
   for (let i = min; i <= max; i += (page.step || 1)) items.push(i);
 
+  // Drum: vertical scroll
   const handleWheel = (e) => {
     e.preventDefault();
     setValue(v => Math.max(min, Math.min(max, v + (e.deltaY > 0 ? 1 : -1))));
   };
 
-  const handlePointerDown = (e) => { isDragging.current = true; lastY.current = e.clientY; };
+  const handlePointerDown = (e) => { isDragging.current = true; lastY.current = e.clientY; lastX.current = e.clientX; };
   const handlePointerMove = (e) => {
     if (!isDragging.current) return;
-    const dy = lastY.current - e.clientY;
-    if (Math.abs(dy) > 12) {
-      setValue(v => Math.max(min, Math.min(max, v + (dy > 0 ? 1 : -1))));
-      lastY.current = e.clientY;
+    if (visualStyle === 'ruler') {
+      const dx = lastX.current - e.clientX;
+      if (Math.abs(dx) > 8) {
+        setValue(v => Math.max(min, Math.min(max, v + (dx > 0 ? 1 : -1))));
+        lastX.current = e.clientX;
+      }
+    } else {
+      const dy = lastY.current - e.clientY;
+      if (Math.abs(dy) > 12) {
+        setValue(v => Math.max(min, Math.min(max, v + (dy > 0 ? 1 : -1))));
+        lastY.current = e.clientY;
+      }
     }
   };
   const handlePointerUp = () => { isDragging.current = false; };
@@ -156,6 +337,104 @@ function ScrollPickerBlock({ page, T, onDone }) {
     return () => { document.removeEventListener('pointermove', handlePointerMove); document.removeEventListener('pointerup', handlePointerUp); };
   }, []);
 
+  const continueBtn = (
+    <button style={{ width: '100%', padding: '16px 0', borderRadius: 16, border: 'none', background: T.primary, color: T.onPrimary || '#fff', fontWeight: 700, fontSize: '1rem', cursor: 'pointer', marginTop: 'auto', marginBottom: 24, boxShadow: `0 4px 16px rgba(${T.rgb},.25)` }}
+      onClick={() => onDone(value)}>
+      Continuar
+    </button>
+  );
+
+  // ── RULER STYLE ──
+  if (visualStyle === 'ruler') {
+    const ticks = [];
+    for (let i = value - 20; i <= value + 20; i++) { if (i >= min && i <= max) ticks.push(i); }
+    return (
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+        <h2 style={{ fontWeight: 700, fontSize: '1.3rem', textAlign: 'center', marginBottom: 16, color: T.text }}>{page.text}</h2>
+        <div style={{ fontSize: '2.8rem', fontWeight: 800, color: T.text, marginBottom: 4, letterSpacing: '-1px' }}>
+          {value}<span style={{ fontSize: '1.2rem', fontWeight: 600, color: T.textMuted, marginLeft: 4 }}>{unit}</span>
+        </div>
+        <div ref={containerRef} onWheel={handleWheel} onPointerDown={handlePointerDown}
+          style={{ position: 'relative', width: '100%', height: 100, overflow: 'hidden', touchAction: 'none', cursor: 'grab', userSelect: 'none', marginBottom: 8 }}>
+          <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'center', height: 60, gap: 0 }}>
+            {ticks.map(t => {
+              const isMajor = t % 10 === 0;
+              const isMid = t % 5 === 0;
+              const isCurrent = t === value;
+              return (
+                <div key={t} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: isMajor ? 10 : 6, flexShrink: 0 }}>
+                  <div style={{ width: isCurrent ? 3 : 1.5, height: isMajor ? 40 : isMid ? 28 : 16, background: isCurrent ? T.text : `rgba(${T.rgb},.2)`, borderRadius: 1, transition: 'height 0.1s' }} />
+                </div>
+              );
+            })}
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'center', marginTop: 4 }}>
+            {ticks.filter(t => t % 10 === 0).map(t => (
+              <div key={t} style={{ width: 60, textAlign: 'center', fontSize: 12, color: t === value ? T.text : T.textMuted, fontWeight: t === value ? 700 : 400 }}>{t}</div>
+            ))}
+          </div>
+          {/* Center indicator */}
+          <div style={{ position: 'absolute', bottom: 20, left: '50%', transform: 'translateX(-50%)', color: T.text }}>
+            <div style={{ width: 0, height: 0, borderLeft: '8px solid transparent', borderRight: '8px solid transparent', borderBottom: `10px solid ${T.text}` }} />
+          </div>
+        </div>
+        <div style={{ fontSize: '0.8rem', color: T.textMuted, marginBottom: 24 }}>Arraste para ajustar</div>
+        {continueBtn}
+      </div>
+    );
+  }
+
+  // ── SLIDER STYLE ──
+  if (visualStyle === 'slider') {
+    const pct = ((value - min) / (max - min)) * 100;
+    const sliderRef = useRef(null);
+    const handleSliderClick = (e) => {
+      const rect = e.currentTarget.getBoundingClientRect();
+      const x = (e.clientX - rect.left) / rect.width;
+      setValue(Math.round(min + x * (max - min)));
+    };
+    return (
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+        <h2 style={{ fontWeight: 700, fontSize: '1.3rem', textAlign: 'center', marginBottom: 24, color: T.text }}>{page.text}</h2>
+        <div style={{ fontSize: '2.8rem', fontWeight: 800, color: T.primary, marginBottom: 32 }}>
+          {value} <span style={{ fontSize: '1rem', fontWeight: 600, color: T.textSec }}>{unit}</span>
+        </div>
+        <div ref={sliderRef} onClick={handleSliderClick}
+          style={{ position: 'relative', width: '100%', maxWidth: 300, height: 10, background: `rgba(${T.rgb},.1)`, borderRadius: 5, cursor: 'pointer', margin: '0 auto' }}>
+          <div style={{ height: '100%', width: `${pct}%`, background: T.primary, borderRadius: 5, transition: 'width 0.15s' }} />
+          <div style={{ position: 'absolute', top: '50%', left: `${pct}%`, transform: 'translate(-50%, -50%)', width: 28, height: 28, borderRadius: '50%', background: '#fff', border: `3px solid ${T.primary}`, boxShadow: `0 2px 10px rgba(${T.rgb},.3)`, transition: 'left 0.15s' }} />
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%', maxWidth: 300, margin: '12px auto 0', fontSize: '0.85rem', color: T.textMuted }}>
+          <span>{min} {unit}</span><span>{max} {unit}</span>
+        </div>
+        <div style={{ flex: 1 }} />
+        {continueBtn}
+      </div>
+    );
+  }
+
+  // ── INPUT STYLE ──
+  if (visualStyle === 'input') {
+    return (
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+        <h2 style={{ fontWeight: 700, fontSize: '1.3rem', textAlign: 'center', marginBottom: 32, color: T.text }}>{page.text}</h2>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 20, marginBottom: 32 }}>
+          <button onClick={() => setValue(v => Math.max(min, v - 1))}
+            style={{ width: 56, height: 56, borderRadius: 16, background: `rgba(${T.rgb},.06)`, border: `2px solid rgba(${T.rgb},.15)`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 28, fontWeight: 700, color: T.textMuted, cursor: 'pointer' }}>−</button>
+          <div style={{ textAlign: 'center', minWidth: 120 }}>
+            <div style={{ fontSize: '3.2rem', fontWeight: 800, color: T.text, lineHeight: 1 }}>{value}</div>
+            <div style={{ fontSize: '1rem', fontWeight: 600, color: T.textMuted, marginTop: 4 }}>{unit}</div>
+          </div>
+          <button onClick={() => setValue(v => Math.min(max, v + 1))}
+            style={{ width: 56, height: 56, borderRadius: 16, background: T.primary, border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 28, fontWeight: 700, color: T.onPrimary || '#fff', cursor: 'pointer', boxShadow: `0 4px 12px rgba(${T.rgb},.25)` }}>+</button>
+        </div>
+        <div style={{ flex: 1 }} />
+        {continueBtn}
+      </div>
+    );
+  }
+
+  // ── DRUM STYLE (default) ──
   const visible = [];
   for (let i = value - 4; i <= value + 4; i++) {
     if (i >= min && i <= max) visible.push(i);
@@ -193,10 +472,7 @@ function ScrollPickerBlock({ page, T, onDone }) {
         {value} <span style={{ fontSize: '0.9rem', fontWeight: 600, color: T.textSec }}>{unit}</span>
       </div>
 
-      <button style={{ width: '100%', padding: '16px 0', borderRadius: 16, border: 'none', background: T.primary, color: T.onPrimary || '#fff', fontWeight: 700, fontSize: '1rem', cursor: 'pointer', marginTop: 'auto', marginBottom: 24, boxShadow: `0 4px 16px rgba(${T.rgb},.25)` }}
-        onClick={() => onDone(value)}>
-        Continuar
-      </button>
+      {continueBtn}
     </div>
   );
 }
@@ -258,23 +534,41 @@ function NumberInputBlock({ page, T, onDone }) {
 function BMIBlock({ page, pages, answers, T, onDone }) {
   const [phase, setPhase] = useState('calculating');
   const [bmi, setBmi] = useState(null);
+  const [heightVal, setHeightVal] = useState(170);
+  const [weightVal, setWeightVal] = useState(70);
 
   useEffect(() => {
-    // Find height and weight from previous answers
     let height = null, weight = null;
     pages.forEach((p, i) => {
       if (answers[i] === undefined) return;
       const checkBlock = (b) => {
-        if (b.type === 'scroll-picker' && (b.unit === 'cm' || (b.text || '').toLowerCase().includes('altura'))) height = answers[i];
-        if (b.type === 'number-input' && (b.unit === 'kg' || (b.text || '').toLowerCase().includes('peso'))) weight = answers[i];
+        const bType = b.type || '';
+        const bText = (b.text || b.title || '').toLowerCase();
+        const bUnit = (b.unit || '').toLowerCase();
+        // Height detection
+        if ((bType === 'scroll-picker' || bType === 'number-input') && (bUnit === 'cm' || bText.includes('altura') || bText.includes('height'))) height = answers[i];
+        // Weight detection
+        if ((bType === 'weight-picker' || bType === 'number-input') && (bUnit === 'kg' || bText.includes('peso') || bText.includes('weight'))) weight = answers[i];
       };
-      if (p.type === 'scroll-picker' || p.type === 'number-input') checkBlock(p);
+      // Check page-level type (for single-block pages)
+      if (p.type === 'scroll-picker' || p.type === 'number-input' || p.type === 'weight-picker') checkBlock(p);
       if (p.blocks) p.blocks.forEach(checkBlock);
     });
 
-    // Fallback if not found
+    // Also check from picker stored data
+    if (!height && typeof window !== 'undefined') {
+      const storedH = sessionStorage.getItem('quiz_picker_height');
+      if (storedH) height = parseFloat(storedH);
+    }
+    if (!weight && typeof window !== 'undefined') {
+      const storedW = sessionStorage.getItem('quiz_picker_weight');
+      if (storedW) weight = parseFloat(storedW);
+    }
+
     if (!height) height = 170;
     if (!weight) weight = 70;
+    setHeightVal(height);
+    setWeightVal(weight);
 
     const calculated = weight / ((height / 100) ** 2);
     setBmi(Math.round(calculated * 10) / 10);
@@ -284,7 +578,11 @@ function BMIBlock({ page, pages, answers, T, onDone }) {
   if (phase === 'calculating') {
     return (
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
-        <div style={{ width: 56, height: 56, borderRadius: '50%', border: `3px solid ${T.border}`, borderTopColor: T.primary, animation: 'spin 1s linear infinite', marginBottom: 20 }} />
+        <style>{`@keyframes pulseRing { 0% { transform:scale(0.8); opacity:1; } 100% { transform:scale(1.4); opacity:0; } }`}</style>
+        <div style={{ position: 'relative', width: 80, height: 80, marginBottom: 24 }}>
+          <div style={{ position: 'absolute', inset: 0, borderRadius: '50%', border: `3px solid ${T.primary}30`, animation: 'pulseRing 1.5s ease infinite' }} />
+          <div style={{ width: 80, height: 80, borderRadius: '50%', border: `4px solid ${T.border}`, borderTopColor: T.primary, animation: 'spin 1s linear infinite' }} />
+        </div>
         <h3 style={{ fontSize: '1.1rem', fontWeight: 700, color: T.text, marginBottom: 8 }}>Calculando seu IMC...</h3>
         <p style={{ color: T.textSec, fontSize: '0.85rem' }}>Analisando altura e peso</p>
       </div>
@@ -292,74 +590,126 @@ function BMIBlock({ page, pages, answers, T, onDone }) {
   }
 
   const zones = [
-    { label: 'Abaixo do peso', min: 0, max: 18.5, color: '#3b82f6', emoji: '🔵' },
-    { label: 'Peso normal', min: 18.5, max: 25, color: '#22c55e', emoji: '🟢' },
-    { label: 'Sobrepeso', min: 25, max: 30, color: '#f59e0b', emoji: '🟡' },
-    { label: 'Obesidade', min: 30, max: 45, color: '#ef4444', emoji: '🔴' },
+    { label: 'Abaixo do peso', range: '< 18.5', min: 0, max: 18.5, color: '#3b82f6', emoji: '🔵' },
+    { label: 'Peso normal', range: '18.5 – 24.9', min: 18.5, max: 25, color: '#22c55e', emoji: '🟢' },
+    { label: 'Sobrepeso', range: '25.0 – 29.9', min: 25, max: 30, color: '#f59e0b', emoji: '🟡' },
+    { label: 'Obesidade', range: '≥ 30', min: 30, max: 45, color: '#ef4444', emoji: '🔴' },
   ];
   const currentZone = zones.find(z => bmi >= z.min && bmi < z.max) || zones[zones.length - 1];
   const pct = Math.min(100, Math.max(0, ((bmi - 15) / 25) * 100));
 
-  const texts = {
-    'Abaixo do peso': 'Seu IMC indica que você está abaixo do peso ideal. Isso pode afetar sua energia, imunidade e bem-estar. Uma alimentação adequada e acompanhamento profissional podem ajudar.',
-    'Peso normal': 'Seu IMC está na faixa considerada saudável. No entanto, manter esse equilíbrio requer atenção contínua à alimentação e atividade física.',
-    'Sobrepeso': 'Seu IMC indica sobrepeso, o que pode aumentar o risco de problemas de saúde como diabetes e hipertensão. Pequenas mudanças nos hábitos podem fazer grande diferença.',
-    'Obesidade': 'Seu IMC indica obesidade, condição que requer atenção especial. É importante buscar orientação para melhorar sua qualidade de vida e prevenir complicações.',
+  const zoneTexts = {
+    'Abaixo do peso': 'Seu IMC indica que você está abaixo do peso ideal. Isso pode afetar sua energia, imunidade e bem-estar geral. Uma alimentação adequada pode ajudar.',
+    'Peso normal': 'Parabéns! Você está dentro do peso ideal. Manter um peso saudável reduz o risco de problemas cardíacos e melhora a qualidade de vida.',
+    'Sobrepeso': 'Seu IMC indica sobrepeso, o que pode aumentar o risco de problemas de saúde. Pequenas mudanças nos hábitos podem fazer grande diferença.',
+    'Obesidade': 'Seu IMC indica obesidade, condição que requer atenção especial. É importante buscar orientação para melhorar sua qualidade de vida.',
   };
 
-  // Bar chart data
-  const chartBars = [
-    { label: 'Seu IMC', value: bmi, color: currentZone.color },
-    { label: 'Ideal mín', value: 18.5, color: '#22c55e' },
-    { label: 'Ideal máx', value: 25, color: '#22c55e' },
-  ];
-  const chartMax = Math.max(bmi, 35);
+  // Body type analysis based on BMI
+  const getBodyType = () => {
+    if (bmi < 18.5) return { type: 'Ectomorfo', desc: 'Corpo magro, dificuldade em ganhar peso e massa muscular' };
+    if (bmi < 22) return { type: 'Ectomorfo com Mesomorfo', desc: 'Corpo magro com tendência atlética, perde peso facilmente' };
+    if (bmi < 25) return { type: 'Mesomorfo', desc: 'Corpo atlético, facilidade para ganhar massa muscular' };
+    if (bmi < 28) return { type: 'Mesomorfo com Endomorfo', desc: 'Corpo robusto, ganha massa mas retém gordura' };
+    return { type: 'Endomorfo', desc: 'Corpo largo, tendência a acumular gordura facilmente' };
+  };
+
+  const getMetabolism = () => {
+    if (bmi < 20) return { label: 'Metabolismo Acelerado', desc: 'Queima calorias rapidamente e pode ter dificuldade em ganhar peso' };
+    if (bmi < 25) return { label: 'Metabolismo Normal', desc: 'Queima calorias de forma equilibrada, mantém peso com facilidade' };
+    if (bmi < 30) return { label: 'Metabolismo Moderado', desc: 'Perde peso facilmente com exercícios, mas pode ganhar peso rápido' };
+    return { label: 'Metabolismo Lento', desc: 'Queima menos calorias em repouso e precisa de mais atividade física' };
+  };
+
+  const bodyType = getBodyType();
+  const metabolism = getMetabolism();
+  const idealWeight = Math.round(((22 * (heightVal / 100) ** 2)) * 100) / 100;
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+      <style>{`
+        @keyframes bmiSlideUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes bmiPulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.05); } }
+        @keyframes bmiPointer { from { left: 0%; } }
+      `}</style>
+
       {/* BMI Value */}
-      <div style={{ textAlign: 'center', marginBottom: 16 }}>
+      <div style={{ textAlign: 'center', marginBottom: 16, animation: 'bmiSlideUp 0.6s ease both' }}>
         <h2 style={{ fontSize: '1rem', fontWeight: 700, color: T.text, margin: '0 0 8px' }}>{page.title || 'Seu IMC'}</h2>
-        <div style={{ fontSize: '2.8rem', fontWeight: 800, color: currentZone.color, lineHeight: 1 }}>{bmi}</div>
-        <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginTop: 8, padding: '4px 14px', borderRadius: 20, background: `${currentZone.color}15`, border: `1px solid ${currentZone.color}30` }}>
+        <div style={{ fontSize: '3rem', fontWeight: 800, color: currentZone.color, lineHeight: 1, animation: 'bmiPulse 2s ease infinite' }}>{bmi}</div>
+        <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginTop: 8, padding: '6px 16px', borderRadius: 20, background: `${currentZone.color}15`, border: `1px solid ${currentZone.color}30` }}>
           <span>{currentZone.emoji}</span>
           <span style={{ fontSize: '0.85rem', fontWeight: 700, color: currentZone.color }}>{currentZone.label}</span>
         </div>
       </div>
 
-      {/* Gauge */}
-      <div style={{ marginBottom: 20 }}>
-        <div style={{ display: 'flex', height: 14, borderRadius: 10, overflow: 'hidden', boxShadow: 'inset 0 1px 3px rgba(0,0,0,.08)' }}>
-          {zones.map((z, i) => <div key={i} style={{ flex: 1, background: z.color, opacity: z === currentZone ? 1 : 0.5 }} />)}
-        </div>
-        <div style={{ position: 'relative', height: 16, marginTop: -4 }}>
-          <div style={{ position: 'absolute', left: `${pct}%`, transform: 'translateX(-50%)', transition: 'left 0.8s ease' }}>
-            <div style={{ width: 0, height: 0, borderLeft: '6px solid transparent', borderRight: '6px solid transparent', borderBottom: `8px solid ${currentZone.color}`, margin: '0 auto' }} />
+      {/* Gradient Gauge */}
+      <div style={{ marginBottom: 20, animation: 'bmiSlideUp 0.6s ease 0.2s both' }}>
+        <div style={{ height: 14, borderRadius: 10, overflow: 'hidden', background: 'linear-gradient(90deg, #3b82f6 0%, #22c55e 30%, #f59e0b 60%, #ef4444 100%)', boxShadow: 'inset 0 1px 3px rgba(0,0,0,.08)' }} />
+        <div style={{ position: 'relative', height: 20, marginTop: -3 }}>
+          <div style={{ position: 'absolute', left: `${pct}%`, transform: 'translateX(-50%)', transition: 'left 1.2s ease', animation: 'bmiPointer 1.2s ease both' }}>
+            <div style={{ width: 16, height: 16, borderRadius: '50%', background: '#fff', border: `3px solid ${currentZone.color}`, boxShadow: '0 2px 6px rgba(0,0,0,.2)' }} />
           </div>
         </div>
-        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 2 }}>
-          {zones.map((z, i) => <span key={i} style={{ fontSize: '0.6rem', color: z.color, fontWeight: 600 }}>{z.label}</span>)}
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 2, fontSize: '0.58rem', color: T.textSec }}>
+          <span>15</span><span>18.5</span><span>25</span><span>30</span><span>40</span>
         </div>
       </div>
 
-      {/* Bar chart */}
-      <div style={{ background: T.card, borderRadius: 16, padding: '14px 14px 10px', border: `1px solid ${T.border}`, marginBottom: 16 }}>
-        <div style={{ fontSize: '0.75rem', fontWeight: 700, color: T.text, marginBottom: 10 }}>Comparação</div>
-        {chartBars.map((bar, i) => (
-          <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-            <span style={{ fontSize: '0.7rem', width: 60, color: T.textSec, flexShrink: 0 }}>{bar.label}</span>
-            <div style={{ flex: 1, height: 18, borderRadius: 6, background: `${T.border}50`, overflow: 'hidden', position: 'relative' }}>
-              <div style={{ height: '100%', width: `${(bar.value / chartMax) * 100}%`, background: bar.color, borderRadius: 6, transition: 'width 1s ease', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', paddingRight: 6 }}>
-                <span style={{ fontSize: '0.6rem', fontWeight: 700, color: '#fff' }}>{bar.value}</span>
+      {/* Classification Card */}
+      <div style={{ background: `${currentZone.color}08`, borderRadius: 14, padding: '14px 16px', border: `1px solid ${currentZone.color}20`, marginBottom: 16, animation: 'bmiSlideUp 0.6s ease 0.3s both' }}>
+        <div style={{ fontSize: '0.78rem', fontWeight: 700, color: currentZone.color, marginBottom: 4 }}>
+          📋 Entre {currentZone.range} – {currentZone.label}
+        </div>
+        <p style={{ fontSize: '0.82rem', lineHeight: 1.6, color: T.textSec, margin: 0 }}>{zoneTexts[currentZone.label]}</p>
+      </div>
+
+      {/* Body Profile Section */}
+      <div style={{ marginBottom: 16, animation: 'bmiSlideUp 0.6s ease 0.4s both' }}>
+        <h3 style={{ fontSize: '1rem', fontWeight: 800, color: T.text, marginBottom: 14 }}>Informe do seu perfil:</h3>
+        <div style={{ display: 'flex', gap: 16 }}>
+          {/* Profile Info */}
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 14 }}>
+            {/* Body Type */}
+            <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+              <div style={{ width: 36, height: 36, borderRadius: '50%', background: `${T.primary}12`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18, flexShrink: 0 }}>🧬</div>
+              <div>
+                <div style={{ fontSize: '0.7rem', color: T.textSec, fontWeight: 500 }}>Tipo de corpo</div>
+                <div style={{ fontSize: '0.88rem', fontWeight: 700, color: T.text }}>{bodyType.type}</div>
+              </div>
+            </div>
+            {/* Metabolism */}
+            <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+              <div style={{ width: 36, height: 36, borderRadius: '50%', background: `${T.primary}12`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18, flexShrink: 0 }}>🔥</div>
+              <div>
+                <div style={{ fontSize: '0.7rem', color: T.textSec, fontWeight: 500 }}>{metabolism.label}</div>
+                <div style={{ fontSize: '0.82rem', fontWeight: 600, color: T.text, lineHeight: 1.4 }}>{metabolism.desc}</div>
               </div>
             </div>
           </div>
-        ))}
+          {/* Body silhouette */}
+          <div style={{ width: 90, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 70, opacity: 0.8 }}>
+            🧍
+          </div>
+        </div>
       </div>
 
-      {/* Text */}
-      <div style={{ background: `${currentZone.color}08`, borderRadius: 14, padding: '14px 14px', border: `1px solid ${currentZone.color}20`, marginBottom: 16 }}>
-        <p style={{ fontSize: '0.85rem', lineHeight: 1.7, color: T.textSec, margin: 0 }}>{texts[currentZone.label]}</p>
+      {/* Personal Data Card */}
+      <div style={{ background: T.card, borderRadius: 14, padding: '14px 16px', border: `1px solid ${T.border}`, marginBottom: 16, animation: 'bmiSlideUp 0.6s ease 0.5s both' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingBottom: 8, borderBottom: `1px solid ${T.border}` }}>
+            <span style={{ fontSize: '0.82rem', fontWeight: 700, color: T.text }}>Seu Peso:</span>
+            <span style={{ fontSize: '0.88rem', fontWeight: 800, color: T.primary }}>{weightVal} kg</span>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingBottom: 8, borderBottom: `1px solid ${T.border}` }}>
+            <span style={{ fontSize: '0.82rem', fontWeight: 700, color: T.text }}>Sua Altura:</span>
+            <span style={{ fontSize: '0.88rem', fontWeight: 800, color: T.primary }}>{heightVal} cm</span>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ fontSize: '0.82rem', fontWeight: 700, color: T.text }}>Peso Ideal:</span>
+            <span style={{ fontSize: '0.88rem', fontWeight: 800, color: '#22c55e' }}>{idealWeight} kg</span>
+          </div>
+        </div>
       </div>
 
       <button style={{ width: '100%', padding: '16px 0', borderRadius: 16, border: 'none', background: T.primary, color: T.onPrimary || '#fff', fontWeight: 700, fontSize: '1rem', cursor: 'pointer', boxShadow: `0 4px 16px rgba(${T.rgb},.25)`, marginTop: 'auto' }}
@@ -560,9 +910,768 @@ const CSS = `
 .qp-shimmer{background:linear-gradient(90deg,transparent 0%,rgba(255,255,255,.4) 50%,transparent 100%);background-size:200% 100%;animation:qp-shimmer 1.5s infinite}
 @keyframes pulse{0%,100%{transform:scale(1);box-shadow:0 6px 20px rgba(var(--qp-rgb),.3)}50%{transform:scale(1.02);box-shadow:0 8px 28px rgba(var(--qp-rgb),.45)}}
 @keyframes spin{0%{transform:rotate(0deg)}100%{transform:rotate(360deg)}}
+.cloned-page{max-width:100%!important;overflow-x:hidden!important;box-sizing:border-box!important}
+.cloned-page *{max-width:100%!important;box-sizing:border-box!important}
+.cloned-page img{height:auto!important;max-width:100%!important}
+.cloned-page video,.cloned-page iframe{max-width:100%!important;height:auto!important}
+@media(max-width:520px){.cloned-page{padding:0!important;margin:0!important;width:100%!important;font-size:inherit!important}}
 `;
 
 const pageAnim = { initial: { opacity: 0, y: 24 }, animate: { opacity: 1, y: 0 }, exit: { opacity: 0, y: -20 }, transition: { duration: 0.35, ease: 'easeOut' } };
+
+// ═══ CLONED PAGE BLOCK — iframe-based for full JS execution ═══
+function ClonedPageBlock({ html, fullCode, onAdvance, btnStyle, buttonActions, pixelCode, clonePageType, quizId, pageIndex, setAnswers }) {
+  const iframeRef = useRef(null);
+  const htmlRef = useRef(null);
+  const isMultiSelect = clonePageType === 'multi-select';
+  const [hasSelection, setHasSelection] = useState(false);
+
+  // Listen for postMessage from iframe to advance
+  useEffect(() => {
+    const handleMessage = (e) => {
+      if (e.data?.type === 'clone-advance') {
+        // Record answer from cloned page
+        if (e.data.answer) {
+          recordEvent(quizId || '', 'answer', { questionIndex: pageIndex, value: e.data.answer, source: 'clone' });
+          if (setAnswers) setAnswers(prev => ({ ...prev, [pageIndex]: e.data.answer }));
+        } else {
+          recordEvent(quizId || '', 'answer', { questionIndex: pageIndex, value: 'advanced', source: 'clone' });
+        }
+        onAdvance();
+      }
+      if (e.data?.type === 'clone-selection') {
+        setHasSelection(true);
+      }
+    };
+    window.addEventListener('message', handleMessage);
+    return () => window.removeEventListener('message', handleMessage);
+  }, [onAdvance]);
+
+  // If we have fullCode, render in iframe for full JS execution
+  if (fullCode) {
+    // Inject a navigation bridge that uses postMessage to communicate with parent
+    const playerBridge = `<script data-player-bridge>
+(function() {
+  var advanced = false;
+  var pageType = ${JSON.stringify(clonePageType || 'choice')};
+  var isMultiSelect = pageType === 'multi-select';
+  var btnActions = ${JSON.stringify(buttonActions || {})};
+  var submitRe = /continuar|continue|next|enviar|submit|avan|come|pr.ximo|siguiente|seguir|empezar|iniciar|start/i;
+  
+  function doAdvance(answerText) {
+    if (advanced) return;
+    advanced = true;
+    window.parent.postMessage({ type: 'clone-advance', answer: answerText || '' }, '*');
+    setTimeout(function() { advanced = false; }, 2000);
+  }
+  
+  function isSubmitButton(el) {
+    var tag = el.tagName ? el.tagName.toLowerCase() : '';
+    var cls = (el.className || '').toString().toLowerCase();
+    var text = (el.textContent || '').trim();
+    var role = (el.getAttribute && el.getAttribute('role') || '').toLowerCase();
+    // Must have submit-like text AND be a button/CTA-like element
+    if (submitRe.test(text) && text.length < 80) {
+      if (tag === 'button' || tag === 'a') return true;
+      if (cls.includes('btn') || cls.includes('cta') || cls.includes('submit') || cls.includes('action') || cls.includes('next')) return true;
+      if (role === 'button') return true;
+    }
+    // Explicit CTA/submit classes with very short text (button feel)
+    if ((cls.includes('cta') || cls.includes('submit')) && text.length < 60 && text.length > 1) return true;
+    return false;
+  }
+  
+  function isOptionElement(el) {
+    var tag = el.tagName ? el.tagName.toLowerCase() : '';
+    var cls = (el.className || '').toString().toLowerCase();
+    var text = (el.textContent || '').trim();
+    var role = (el.getAttribute && el.getAttribute('role') || '').toLowerCase();
+    if (text.length < 2 || text.length > 300) return false;
+    if (tag === 'input' || tag === 'textarea' || tag === 'select') return false;
+    // Direct tag check
+    if (tag === 'button') return true;
+    // Role check
+    if (role === 'button' || role === 'option' || role === 'radio' || role === 'listitem') return true;
+    // Class pattern check (very broad)
+    if (cls.includes('option') || cls.includes('choice') || cls.includes('card') || cls.includes('answer') || 
+        cls.includes('cursor-pointer') || cls.includes('quiz') || cls.includes('opt') || cls.includes('select') ||
+        cls.includes('radio') || cls.includes('check') || cls.includes('item') || cls.includes('variant') ||
+        cls.includes('clickable') || cls.includes('hover') || cls.includes('btn') || cls.includes('cta')) return true;
+    // data-* attribute check
+    if (el.getAttribute) {
+      var attrs = el.attributes || [];
+      for (var i = 0; i < attrs.length; i++) {
+        var name = attrs[i].name.toLowerCase();
+        if (name.startsWith('data-') && (name.includes('option') || name.includes('answer') || name.includes('choice') || name.includes('value') || name.includes('click') || name.includes('action'))) return true;
+      }
+    }
+    // Style check: if element has cursor:pointer, it's interactive
+    try {
+      var cStyle = window.getComputedStyle(el);
+      if (cStyle && cStyle.cursor === 'pointer') return true;
+    } catch(e) {}
+    // Parent group check
+    var parent = el.parentElement;
+    if (parent) {
+      var pCls = (parent.className || '').toString().toLowerCase();
+      var pTag = parent.tagName ? parent.tagName.toLowerCase() : '';
+      if ((pCls.includes('group') || pCls.includes('list') || pCls.includes('options') || pCls.includes('grid') || pCls.includes('stack') || pTag === 'ul' || pTag === 'ol') && (tag === 'div' || tag === 'li' || tag === 'label')) return true;
+    }
+    return false;
+  }
+  
+  function findOptionAncestor(el) {
+    var node = el;
+    var depth = 0;
+    while (node && node !== document.body && depth < 10) {
+      if (isOptionElement(node)) return node;
+      node = node.parentElement;
+      depth++;
+    }
+    return null;
+  }
+  
+  // Also find any clickable ancestor (a, button, or cursor:pointer)
+  function findClickableAncestor(el) {
+    var node = el;
+    var depth = 0;
+    while (node && node !== document.body && depth < 8) {
+      var tag = node.tagName ? node.tagName.toLowerCase() : '';
+      if (tag === 'a' || tag === 'button') return node;
+      try {
+        var st = window.getComputedStyle(node);
+        if (st && st.cursor === 'pointer' && node.offsetHeight > 20) return node;
+      } catch(e) {}
+      node = node.parentElement;
+      depth++;
+    }
+    return null;
+  }
+  
+  function toggleMultiSelect(card) {
+    var sel = card.classList.contains('active');
+    if (sel) {
+      card.classList.remove('active');
+      card.style.borderColor = '';
+      card.style.boxShadow = '';
+    } else {
+      card.classList.add('active');
+      card.style.borderColor = '#333';
+      card.style.boxShadow = '0 0 0 1px #333';
+    }
+    card.querySelectorAll('svg').forEach(function(svg) {
+      svg.style.opacity = sel ? '0' : '1';
+    });
+    var grp = card.closest('[class*="group"]');
+    if (grp && grp !== card) {
+      if (sel) grp.classList.remove('active');
+      else grp.classList.add('active');
+    }
+    var cb = card.querySelector('input[type="checkbox"]');
+    if (cb) cb.checked = !sel;
+    window.parent.postMessage({ type: 'clone-selection' }, '*');
+  }
+  
+  // Stamp data-cta-url attributes on buttons that have CTA actions
+  function resolvePath(root, path) {
+    if (!path || !root) return null;
+    var parts = path.split('/');
+    var cur = root;
+    for (var i = 0; i < parts.length; i++) {
+      var m = parts[i].match(/^(\w+)\[(\d+)\]$/);
+      if (!m) return null;
+      var tag = m[1], idx = parseInt(m[2]);
+      var children = [];
+      for (var j = 0; j < cur.children.length; j++) {
+        if (cur.children[j].tagName && cur.children[j].tagName.toLowerCase() === tag) children.push(cur.children[j]);
+      }
+      cur = children[idx];
+      if (!cur) return null;
+    }
+    return cur;
+  }
+  
+  // Collect all CTA URLs from btnActions
+  var ctaUrls = [];
+  for (var k in btnActions) {
+    if (btnActions[k] && btnActions[k].action === 'cta' && btnActions[k].ctaUrl) {
+      ctaUrls.push({ path: k, url: btnActions[k].ctaUrl });
+    }
+  }
+  
+  function stampCTAUrls() {
+    if (ctaUrls.length === 0) return;
+    ctaUrls.forEach(function(entry) {
+      // Try multiple roots: body first, then .cloned-page
+      var el = resolvePath(document.body, entry.path);
+      if (!el) el = resolvePath(document.querySelector('.cloned-page'), entry.path);
+      if (el) {
+        el.setAttribute('data-cta-url', entry.url);
+      } else {
+        // Fallback: stamp ALL submit-like buttons with the CTA URL
+        var allBtns = document.querySelectorAll('button, a, [role="button"]');
+        for (var i = 0; i < allBtns.length; i++) {
+          if (isSubmitButton(allBtns[i]) && !allBtns[i].getAttribute('data-cta-url')) {
+            allBtns[i].setAttribute('data-cta-url', entry.url);
+          }
+        }
+      }
+    });
+    // Also check for any elements already having data-cta-url from editor
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', stampCTAUrls);
+  else stampCTAUrls();
+  
+  document.addEventListener('click', function(e) {
+    var target = e.target;
+    var node = target;
+    // Pre-check: walk up to find any ancestor with data-cta-url (always takes priority)
+    var ctaNode = target;
+    while (ctaNode && ctaNode !== document.body) {
+      var cta = ctaNode.getAttribute && ctaNode.getAttribute('data-cta-url');
+      if (cta) {
+        e.preventDefault();
+        e.stopPropagation();
+        ctaNode.style.transform = 'scale(0.97)';
+        ctaNode.style.opacity = '0.7';
+        setTimeout(function() { window.top.location.href = cta; }, 200);
+        return;
+      }
+      ctaNode = ctaNode.parentElement;
+    }
+    // Fallback CTA check: if we have CTA URLs and clicked a submit-like button, redirect
+    if (ctaUrls.length > 0) {
+      var btnNode = target;
+      while (btnNode && btnNode !== document.body) {
+        if (isSubmitButton(btnNode)) {
+          e.preventDefault();
+          e.stopPropagation();
+          btnNode.style.transform = 'scale(0.97)';
+          btnNode.style.opacity = '0.7';
+          var url = ctaUrls[0].url;
+          setTimeout(function() { window.top.location.href = url; }, 200);
+          return;
+        }
+        btnNode = btnNode.parentElement;
+      }
+    }
+    // First pass: check for submit buttons
+    while (node && node !== document.body) {
+      var tag = node.tagName ? node.tagName.toLowerCase() : '';
+      if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
+      if (isSubmitButton(node)) {
+        e.preventDefault();
+        e.stopPropagation();
+        // Check if this button has a CTA url action
+        var ctaUrl = node.getAttribute('data-cta-url');
+        if (ctaUrl) {
+          node.style.transform = 'scale(0.97)';
+          node.style.opacity = '0.7';
+          setTimeout(function() { window.top.location.href = ctaUrl; }, 200);
+          return;
+        }
+        node.style.transform = 'scale(0.97)';
+        node.style.opacity = '0.7';
+        setTimeout(function() { doAdvance((node.textContent || '').trim().substring(0, 200)); }, 300);
+        return;
+      }
+      node = node.parentElement;
+    }
+    // Second pass: check for option cards (always, regardless of pageType)
+    var card = findOptionAncestor(target);
+    if (card && !isSubmitButton(card)) {
+      if (isMultiSelect) {
+        e.preventDefault();
+        e.stopPropagation();
+        toggleMultiSelect(card);
+      } else {
+        e.preventDefault();
+        e.stopPropagation();
+        card.style.transform = 'scale(0.97)';
+        card.style.opacity = '0.7';
+        setTimeout(function() { doAdvance((card.textContent || '').trim().substring(0, 200)); }, 400);
+      }
+      return;
+    }
+    // Third pass: fallback — find any clickable ancestor (a, button, cursor:pointer)
+    // Skip this fallback for multi-select pages (user needs to toggle, not advance)
+    if (!isMultiSelect) {
+      var clickable = findClickableAncestor(target);
+      if (clickable) {
+        var cTag = clickable.tagName ? clickable.tagName.toLowerCase() : '';
+        var cText = (clickable.textContent || '').trim();
+        // Don't advance for external links or navigation links
+        if (cTag === 'a') {
+          var href = (clickable.getAttribute('href') || '');
+          if (href && href !== '#' && !href.startsWith('javascript') && href.startsWith('http')) return; // let real external links work
+        }
+        if (cText.length > 1 && cText.length < 200) {
+          e.preventDefault();
+          e.stopPropagation();
+          // Check for CTA url on clickable element
+          var ctaUrl2 = clickable.getAttribute('data-cta-url');
+          if (ctaUrl2) {
+            clickable.style.transform = 'scale(0.97)';
+            clickable.style.opacity = '0.7';
+            setTimeout(function() { window.top.location.href = ctaUrl2; }, 200);
+            return;
+          }
+          clickable.style.transform = 'scale(0.97)';
+          clickable.style.opacity = '0.7';
+          setTimeout(function() { doAdvance((clickable.textContent || '').trim().substring(0, 200)); }, 400);
+          return;
+        }
+      }
+    }
+  }, true);
+  
+  document.addEventListener('submit', function(e) { e.preventDefault(); doAdvance(); }, true);
+  var origPush = history.pushState;
+  var origReplace = history.replaceState;
+  history.pushState = function() { origPush.apply(this, arguments); doAdvance(); };
+  history.replaceState = function() { origReplace.apply(this, arguments); doAdvance(); };
+  window.addEventListener('popstate', function() { doAdvance(); });
+})();
+</script>`;
+    
+    // Remove old nav bridge and inject new player bridge
+    let iframeDoc = fullCode;
+    // Strip ALL external scripts (prevents Next.js hydration crash)
+    iframeDoc = iframeDoc.replace(/<script[^>]+src=["'][^"']*["'][^>]*><\/script>/gi, '');
+    iframeDoc = iframeDoc.replace(/<script[^>]+src=["'][^"']*["'][^>]*>\s*<\/script>/gi, '');
+    // Remove inline scripts (except our bridge which we'll add)
+    iframeDoc = iframeDoc.replace(/<script(?![^>]*(?:data-player-bridge|data-widget-fix|data-pb-anim|data-rc-anim))[^>]*>[\s\S]*?<\/script>/gi, '');
+    // Remove Next.js __NEXT_DATA__ script
+    iframeDoc = iframeDoc.replace(/<script id="__NEXT_DATA__"[^>]*>[\s\S]*?<\/script>/gi, '');
+    
+    // Inject widget interactivity script (ruler/slider, toggles, etc.)
+    const widgetScript = `<script data-widget-fix>
+(function() {
+  // ═══ RULER / SLIDER DRAG ═══
+  // Find ruler/scale containers (the ones with tick marks and numbers)
+  function initRulers() {
+    // Look for scroll containers with ruler-like content
+    var containers = document.querySelectorAll('[class*="scroll"], [class*="slider"], [class*="ruler"], [class*="picker"], [class*="range"]');
+    if (containers.length === 0) {
+      // Fallback: find containers with multiple small tick-mark children
+      document.querySelectorAll('div').forEach(function(div) {
+        var children = div.children;
+        if (children.length > 10) {
+          var tickCount = 0;
+          for (var i = 0; i < Math.min(children.length, 30); i++) {
+            var ch = children[i];
+            var w = ch.offsetWidth;
+            var h = ch.offsetHeight;
+            if ((w < 5 && h > 10) || (h < 5 && w > 10)) tickCount++;
+          }
+          if (tickCount > 5) containers = [div];
+        }
+      });
+    }
+    
+    containers.forEach(function(container) {
+      var dragging = false, startX = 0, scrollStart = 0;
+      
+      container.style.overflow = 'auto';
+      container.style.cursor = 'grab';
+      container.style.userSelect = 'none';
+      container.style.webkitUserSelect = 'none';
+      container.style.scrollbarWidth = 'none';
+      
+      function onStart(x) {
+        dragging = true;
+        startX = x;
+        scrollStart = container.scrollLeft;
+        container.style.cursor = 'grabbing';
+      }
+      function onMove(x) {
+        if (!dragging) return;
+        var delta = startX - x;
+        container.scrollLeft = scrollStart + delta;
+        updateValueDisplay(container);
+      }
+      function onEnd() {
+        dragging = false;
+        container.style.cursor = 'grab';
+        updateValueDisplay(container);
+      }
+      
+      container.addEventListener('mousedown', function(e) { onStart(e.clientX); e.preventDefault(); });
+      document.addEventListener('mousemove', function(e) { onMove(e.clientX); });
+      document.addEventListener('mouseup', onEnd);
+      container.addEventListener('touchstart', function(e) { onStart(e.touches[0].clientX); }, {passive: true});
+      document.addEventListener('touchmove', function(e) { onMove(e.touches[0].clientX); }, {passive: true});
+      document.addEventListener('touchend', onEnd);
+    });
+  }
+  
+  // Update the large number display based on scroll position
+  function updateValueDisplay(container) {
+    // Find number elements nearby
+    var parent = container.parentElement;
+    if (!parent) return;
+    
+    // Get visible number labels in the ruler
+    var numbers = [];
+    container.querySelectorAll('div, span').forEach(function(el) {
+      var num = parseInt(el.textContent);
+      if (!isNaN(num) && num > 10 && num < 500 && el.children.length === 0) {
+        numbers.push({ el: el, value: num, left: el.offsetLeft });
+      }
+    });
+    
+    if (numbers.length < 2) return;
+    numbers.sort(function(a,b) { return a.left - b.left; });
+    
+    // Find which number is closest to center
+    var centerX = container.scrollLeft + container.clientWidth / 2;
+    var closest = numbers[0];
+    var minDist = Infinity;
+    numbers.forEach(function(n) {
+      var dist = Math.abs(n.left - centerX);
+      if (dist < minDist) { minDist = dist; closest = n; }
+    });
+    
+    // Update the big number display
+    var bigNumbers = parent.parentElement ? parent.parentElement.querySelectorAll('div, span, h2, h3') : [];
+    bigNumbers.forEach(function(el) {
+      var fontSize = parseFloat(getComputedStyle(el).fontSize || 0);
+      if (fontSize > 28 && el.children.length <= 2) {
+        var numText = el.textContent.match(/\\d+/);
+        if (numText && parseInt(numText[0]) > 10 && parseInt(numText[0]) < 500) {
+          el.childNodes.forEach(function(node) {
+            if (node.nodeType === 3 && /\\d+/.test(node.textContent)) {
+              node.textContent = node.textContent.replace(/\\d+/, closest.value);
+            }
+          });
+        }
+      }
+    });
+  }
+  
+  // ═══ TOGGLE BUTTONS (cm/pol, kg/lb) ═══
+  function initToggles() {
+    var toggleGroups = document.querySelectorAll('[class*="toggle"], [class*="tab"], [class*="switch"]');
+    if (toggleGroups.length === 0) {
+      // Fallback: find adjacent buttons/spans that look like unit toggles
+      document.querySelectorAll('button, [role="button"]').forEach(function(btn) {
+        var text = btn.textContent.trim().toLowerCase();
+        if (['cm', 'pol', 'kg', 'lb', 'in', 'ft'].includes(text)) {
+          btn.style.cursor = 'pointer';
+          btn.addEventListener('click', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            // Toggle active state
+            var siblings = btn.parentElement ? btn.parentElement.children : [];
+            for (var i = 0; i < siblings.length; i++) {
+              siblings[i].style.fontWeight = '';
+              siblings[i].style.opacity = '0.5';
+            }
+            btn.style.fontWeight = '700';
+            btn.style.opacity = '1';
+          });
+        }
+      });
+    }
+  }
+  
+  // ═══ QUIZ PICKERS (data-quiz-picker elements) ═══
+  function initPickers() {
+    var pickers = document.querySelectorAll('[data-quiz-picker]');
+    pickers.forEach(function(el) {
+      if (el.dataset.pickerInit) return;
+      el.dataset.pickerInit = '1';
+      var min = parseInt(el.getAttribute('data-min')) || 0;
+      var max = parseInt(el.getAttribute('data-max')) || 300;
+      var unit = el.getAttribute('data-unit') || '';
+      var def = parseInt(el.getAttribute('data-default')) || Math.round((min+max)/2);
+      var vs = el.getAttribute('data-visual-style') || 'drum';
+      var pType = el.getAttribute('data-quiz-picker');
+      var color = pType === 'weight' ? '#10b981' : '#6366f1';
+      var value = def;
+      var question = el.getAttribute('data-question') || '';
+
+      function render() {
+        el.setAttribute('data-picker-value', value);
+        var html = question ? '<div style="font-size:14px;font-weight:700;color:#1a2332;margin-bottom:8px">' + question + '</div>' : '';
+        if (vs === 'drum') {
+          html += '<div style="position:relative;height:220px;overflow:hidden;border-radius:10px;background:linear-gradient(to bottom,rgba(0,0,0,0.08),transparent 25%,transparent 75%,rgba(0,0,0,0.08));touch-action:none;cursor:grab;user-select:none" data-drum="1">';
+          html += '<div style="position:absolute;left:0;right:0;top:50%;transform:translateY(-50%);height:40px;background:' + color + '12;border-top:2px solid ' + color + ';border-bottom:2px solid ' + color + ';z-index:1;pointer-events:none"></div>';
+          html += '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%">';
+          for (var i = value - 4; i <= value + 4; i++) {
+            if (i < min || i > max) { html += '<div style="height:24px"></div>'; continue; }
+            var d = Math.abs(i - value);
+            var fs = d === 0 ? 22 : d === 1 ? 16 : 14;
+            var fw = d === 0 ? 800 : d === 1 ? 600 : 400;
+            var c = d === 0 ? color : d <= 1 ? '#4b5563' : '#9ca3af';
+            var op = d > 3 ? 0.2 : d > 2 ? 0.4 : 1;
+            html += '<div style="height:24px;font-size:' + fs + 'px;font-weight:' + fw + ';color:' + c + ';opacity:' + op + ';transition:all 0.1s">' + i + '</div>';
+          }
+          html += '</div></div>';
+          html += '<div style="margin-top:10px;font-size:18px;font-weight:800;color:' + color + '">' + value + ' ' + unit + '</div>';
+        } else if (vs === 'ruler') {
+          html += '<div style="font-size:36px;font-weight:800;color:#1a2332;margin-bottom:4px">' + value + '<span style="font-size:16px;font-weight:600;color:#9ca3af;margin-left:4px">' + unit + '</span></div>';
+          html += '<div style="position:relative;height:70px;touch-action:none;cursor:grab;user-select:none" data-drum="1"><div style="display:flex;align-items:flex-end;justify-content:center;height:50px">';
+          for (var j = value - 15; j <= value + 15; j++) {
+            if (j < min || j > max) continue;
+            var mj = j % 10 === 0, md = j % 5 === 0, cr = j === value;
+            html += '<div style="display:flex;flex-direction:column;align-items:center;width:' + (mj ? 8 : 5) + 'px;flex-shrink:0"><div style="width:' + (cr ? 3 : 1.5) + 'px;height:' + (mj ? 36 : md ? 24 : 14) + 'px;background:' + (cr ? '#1a2332' : '#d1d5db') + ';border-radius:1px"></div></div>';
+          }
+          html += '</div><div style="position:absolute;bottom:0;left:50%;transform:translateX(-50%)"><div style="width:0;height:0;border-left:6px solid transparent;border-right:6px solid transparent;border-bottom:8px solid #1a2332"></div></div></div>';
+          html += '<div style="font-size:11px;color:#9ca3af;margin-top:6px">Arraste para ajustar</div>';
+        } else if (vs === 'slider') {
+          var pct = ((value - min) / (max - min)) * 100;
+          html += '<div style="font-size:36px;font-weight:800;color:' + color + ';margin-bottom:20px">' + value + ' <span style="font-size:16px;font-weight:600;color:#9ca3af">' + unit + '</span></div>';
+          html += '<div data-slider="1" style="position:relative;height:10px;background:#e5e7eb;border-radius:5px;margin:0 12px;cursor:pointer;touch-action:none">';
+          html += '<div style="height:100%;width:' + pct + '%;background:' + color + ';border-radius:5px"></div>';
+          html += '<div style="position:absolute;top:50%;left:' + pct + '%;transform:translate(-50%,-50%);width:28px;height:28px;border-radius:50%;background:#fff;border:3px solid ' + color + ';box-shadow:0 2px 10px rgba(0,0,0,0.15)"></div>';
+          html += '</div>';
+          html += '<div style="display:flex;justify-content:space-between;margin-top:8px;font-size:12px;color:#9ca3af;padding:0 12px"><span>' + min + ' ' + unit + '</span><span>' + max + ' ' + unit + '</span></div>';
+        } else if (vs === 'input') {
+          html += '<div style="display:flex;align-items:center;justify-content:center;gap:20px;margin-top:8px">';
+          html += '<div data-minus="1" style="width:52px;height:52px;border-radius:14px;background:#f1f5f9;border:2px solid #e2e8f0;display:flex;align-items:center;justify-content:center;font-size:24px;font-weight:700;color:#9ca3af;cursor:pointer;user-select:none">−</div>';
+          html += '<div style="text-align:center;min-width:100px"><div style="font-size:42px;font-weight:800;color:#1a2332;line-height:1">' + value + '</div><div style="font-size:14px;font-weight:600;color:#9ca3af;margin-top:4px">' + unit + '</div></div>';
+          html += '<div data-plus="1" style="width:52px;height:52px;border-radius:14px;background:' + color + ';display:flex;align-items:center;justify-content:center;font-size:24px;font-weight:700;color:#fff;cursor:pointer;user-select:none;box-shadow:0 4px 12px rgba(0,0,0,0.15)">+</div>';
+          html += '</div>';
+        }
+        el.innerHTML = html;
+        bindEvents();
+      }
+
+      function bindEvents() {
+        // Drum / ruler drag
+        var drum = el.querySelector('[data-drum]');
+        if (drum) {
+          var dragging = false, startY = 0, startX = 0;
+          drum.addEventListener('pointerdown', function(e) { dragging = true; startY = e.clientY; startX = e.clientX; e.preventDefault(); });
+          document.addEventListener('pointermove', function(e) {
+            if (!dragging) return;
+            if (vs === 'ruler') {
+              var dx = startX - e.clientX;
+              if (Math.abs(dx) > 8) { value = Math.max(min, Math.min(max, value + (dx > 0 ? 1 : -1))); startX = e.clientX; render(); }
+            } else {
+              var dy = startY - e.clientY;
+              if (Math.abs(dy) > 12) { value = Math.max(min, Math.min(max, value + (dy > 0 ? 1 : -1))); startY = e.clientY; render(); }
+            }
+          });
+          document.addEventListener('pointerup', function() { dragging = false; });
+          drum.addEventListener('wheel', function(e) { e.preventDefault(); value = Math.max(min, Math.min(max, value + (e.deltaY > 0 ? 1 : -1))); render(); });
+        }
+        // Slider click/drag
+        var slider = el.querySelector('[data-slider]');
+        if (slider) {
+          function sliderUpdate(e) {
+            var rect = slider.getBoundingClientRect();
+            var x = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+            value = Math.round(min + x * (max - min));
+            render();
+          }
+          var sdrag = false;
+          slider.addEventListener('pointerdown', function(e) { sdrag = true; sliderUpdate(e); e.preventDefault(); });
+          document.addEventListener('pointermove', function(e) { if (sdrag) sliderUpdate(e); });
+          document.addEventListener('pointerup', function() { sdrag = false; });
+        }
+        // Input +/- buttons
+        var minus = el.querySelector('[data-minus]');
+        var plus = el.querySelector('[data-plus]');
+        if (minus) minus.addEventListener('click', function(e) { e.preventDefault(); e.stopPropagation(); value = Math.max(min, value - 1); render(); });
+        if (plus) plus.addEventListener('click', function(e) { e.preventDefault(); e.stopPropagation(); value = Math.min(max, value + 1); render(); });
+      }
+
+      render();
+    });
+  }
+  
+  // Init after DOM is ready
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', function() { initRulers(); initToggles(); initPickers(); });
+  } else {
+    setTimeout(function() { initRulers(); initToggles(); initPickers(); }, 100);
+  }
+})();
+</script>`;
+
+    const carouselScript = `<script data-carousel-enhance>
+(function() {
+  function initCarousels() {
+    document.querySelectorAll('div, section').forEach(function(el) {
+      if (el.hasAttribute('data-carousel') || el.dataset.enhanced) return;
+      var cs = window.getComputedStyle(el);
+      var hasScroll = cs.overflowX === 'auto' || cs.overflowX === 'scroll';
+      var snapType = (cs.scrollSnapType || '') + (cs.webkitScrollSnapType || '');
+      if (!hasScroll && snapType.indexOf('x') < 0) return;
+      var imgs = el.querySelectorAll('img');
+      if (imgs.length >= 2 && el.scrollWidth > el.clientWidth * 1.3) {
+        el.setAttribute('data-carousel', 'true');
+        el.setAttribute('data-orientation', 'horizontal');
+      }
+    });
+    var carousels = document.querySelectorAll('[data-carousel]');
+    carousels.forEach(function(carousel) {
+      if (carousel.dataset.enhanced) return;
+      carousel.dataset.enhanced = 'true';
+      var allChildren = Array.from(carousel.children);
+      var slides = allChildren.filter(function(ch) { return ch.querySelector && ch.querySelector('img'); });
+      if (slides.length < 2) {
+        var directImgs = Array.from(carousel.querySelectorAll('img'));
+        if (directImgs.length >= 2) {
+          slides = directImgs.map(function(img) { var w = document.createElement('div'); w.appendChild(img.cloneNode(true)); return w; });
+          while (carousel.firstChild) carousel.removeChild(carousel.firstChild);
+          slides.forEach(function(s) { carousel.appendChild(s); });
+        }
+      }
+      if (slides.length < 1) return;
+      allChildren.forEach(function(ch) {
+        if (ch.style && ch.style.fontStyle && ch.style.fontStyle.indexOf('italic') >= 0) ch.remove();
+        var badges = ch.querySelectorAll ? ch.querySelectorAll('div') : [];
+        for (var b = 0; b < badges.length; b++) { var t = (badges[b].textContent || '').trim(); if (/^[0-9]+\\/[0-9]+$/.test(t)) badges[b].remove(); }
+      });
+      var par = carousel.parentElement;
+      if (par) {
+        par.querySelectorAll('[class*=dot],[class*=pag],[class*=indicator],[class*=bullet],[class*=swiper]').forEach(function(d) { if (!carousel.contains(d)) d.style.display = 'none'; });
+        Array.from(par.children).forEach(function(sib) { if (sib === carousel) return; if (sib.querySelectorAll('img').length === 0 && (sib.textContent||'').trim().length < 5 && sib.offsetHeight < 50) sib.style.display = 'none'; });
+      }
+      var firstImg = slides[0].querySelector('img');
+      var cw = carousel.offsetWidth || (par ? par.offsetWidth : 400);
+      var h = 280;
+      if (firstImg && firstImg.naturalWidth > 0 && firstImg.naturalHeight > 0) { h = Math.round(cw * (firstImg.naturalHeight / firstImg.naturalWidth)); }
+      else if (firstImg && firstImg.offsetHeight > 50) { h = firstImg.offsetHeight; }
+      h = Math.max(200, Math.min(600, h));
+      var isHoriz = (carousel.getAttribute('data-orientation') || 'horizontal') !== 'vertical';
+      carousel.style.cssText = 'position:relative;overflow:hidden;width:100%;padding:0;display:block;height:'+h+'px;border-radius:0;background:#000;';
+      var wrapper = document.createElement('div');
+      wrapper.style.cssText = 'display:flex;transition:transform 0.5s cubic-bezier(0.25,0.46,0.45,0.94);will-change:transform;height:100%;flex-direction:'+(isHoriz?'row':'column')+';';
+      slides.forEach(function(slide) {
+        slide.style.cssText = 'min-width:100%;width:100%;height:100%;flex-shrink:0;border:none;border-radius:0;margin:0;padding:0;position:relative;overflow:hidden;background:#000;';
+        var img = slide.querySelector('img'); if (img) img.style.cssText = 'width:100%;height:100%;object-fit:contain;display:block;';
+        wrapper.appendChild(slide);
+      });
+      while (carousel.firstChild) carousel.removeChild(carousel.firstChild);
+      carousel.appendChild(wrapper);
+      var dotsC = document.createElement('div');
+      dotsC.style.cssText = 'position:absolute;bottom:12px;left:50%;transform:translateX(-50%);display:flex;gap:8px;z-index:10;';
+      var cur = 0, dots = [];
+      for (var i = 0; i < slides.length; i++) { (function(idx) {
+        var dot = document.createElement('button');
+        dot.style.cssText = 'width:10px;height:10px;border-radius:50%;border:2px solid rgba(255,255,255,0.9);background:'+(idx===0?'#fff':'rgba(255,255,255,0.35)')+';cursor:pointer;padding:0;transition:all 0.3s;box-shadow:0 1px 4px rgba(0,0,0,0.3);outline:none;';
+        dot.onclick = function(e) { e.preventDefault(); e.stopPropagation(); goTo(idx); };
+        dots.push(dot); dotsC.appendChild(dot);
+      })(i); }
+      carousel.appendChild(dotsC);
+      function goTo(idx) { cur = idx; wrapper.style.transform = (isHoriz?'translateX':'translateY')+'(-'+(idx*100)+'%)'; dots.forEach(function(d,di) { d.style.background = di===idx?'#fff':'rgba(255,255,255,0.35)'; d.style.transform = di===idx?'scale(1.3)':'scale(1)'; }); }
+      var ap = setInterval(function() { goTo((cur+1)%slides.length); }, 3500);
+      carousel.onmouseenter = function() { clearInterval(ap); };
+      carousel.onmouseleave = function() { ap = setInterval(function() { goTo((cur+1)%slides.length); }, 3500); };
+      var sx = 0;
+      carousel.addEventListener('touchstart', function(e) { sx = e.touches[0].clientX; }, {passive:true});
+      carousel.addEventListener('touchend', function(e) { var d = sx - e.changedTouches[0].clientX; if (Math.abs(d)>50) { if (d>0&&cur<slides.length-1) goTo(cur+1); else if (d<0&&cur>0) goTo(cur-1); } }, {passive:true});
+    });
+  }
+  if (document.readyState === 'loading') { document.addEventListener('DOMContentLoaded', function() { setTimeout(initCarousels, 300); }); }
+  else { setTimeout(initCarousels, 300); }
+  window.addEventListener('load', function() { setTimeout(initCarousels, 200); });
+})();
+</script>`;
+    // Inject widget script + carousel script + player bridge before </body>
+    // Inject widget script + carousel script + player bridge before </body>
+    if (iframeDoc.includes('</body>')) {
+        iframeDoc = iframeDoc.replace('</body>', widgetScript + carouselScript + playerBridge + '</body>');
+    } else {
+        // fullCode might be body-only content (from CloneEditor edits)
+        iframeDoc = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body>${iframeDoc}${widgetScript}${carouselScript}${playerBridge}</body></html>`;
+    }
+    
+    // Add sandbox attributes to allow scripts but block navigation
+    return (
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', width: '100%', position: 'relative' }}>
+        <iframe
+          ref={iframeRef}
+          srcDoc={iframeDoc}
+          sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-top-navigation"
+          style={{
+            flex: 1,
+            width: '100%',
+            border: 'none',
+            minHeight: '100vh',
+            background: '#fff',
+          }}
+          title="Quiz Page"
+        />
+        {pixelCode && <div dangerouslySetInnerHTML={{ __html: pixelCode }} style={{ display: 'none' }} />}
+        
+        {/* Floating submit button for multi-select pages — only if iframe doesn't have its own */}
+        {isMultiSelect && hasSelection && !(fullCode && />(Continuar|Continue|Next|Submit|Enviar|Avançar|Siguiente|Suivant|Weiter)\s*[^<]*</i.test(fullCode)) && (
+          <div style={{
+            position: 'fixed', bottom: 0, left: 0, right: 0,
+            padding: '12px 20px 20px',
+            background: 'linear-gradient(transparent, rgba(255,255,255,0.95) 30%)',
+            zIndex: 100,
+          }}>
+            <button
+              onClick={onAdvance}
+              style={{
+                ...btnStyle,
+                width: '100%',
+                maxWidth: 520,
+                margin: '0 auto',
+                display: 'block',
+                animation: 'pulse 2s infinite',
+              }}
+            >
+              Continuar →
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // ── Fallback: old dangerouslySetInnerHTML approach (no fullCode) ──
+  useEffect(() => {
+    if (!htmlRef.current) return;
+    const container = htmlRef.current;
+    container.querySelectorAll('input[type="range"]').forEach(range => {
+      const oninput = range.getAttribute('oninput');
+      if (oninput) {
+        range.addEventListener('input', () => { try { new Function(oninput).call(range); } catch {} });
+      }
+    });
+  }, [html]);
+
+  useEffect(() => {
+    if (!htmlRef.current) return;
+    const container = htmlRef.current;
+    const isSubmitText = (text) => /continuar|continue|next|enviar|submit|avançar|começar|start|prosseguir/i.test(text);
+    const handleClick = (e) => {
+      let target = e.target;
+      if (['input', 'textarea', 'select'].includes(target.tagName?.toLowerCase())) return;
+      for (let i = 0; i < 12; i++) {
+        if (!target || target === container) break;
+        const tag = target.tagName?.toLowerCase();
+        const cls = (target.className?.toString?.() || '').toLowerCase();
+        const text = (target.textContent || '').trim();
+        let isClickable = tag === 'button' || tag === 'a' || cls.includes('btn') || cls.includes('button') || cls.includes('option') || cls.includes('choice');
+        if (!isClickable) { try { if (window.getComputedStyle(target).cursor === 'pointer') isClickable = true; } catch {} }
+        if (isClickable) {
+          e.preventDefault(); e.stopPropagation();
+          target.style.transform = 'scale(0.97)'; target.style.opacity = '0.7';
+          setTimeout(() => { if (target) { target.style.transform = ''; target.style.opacity = ''; } onAdvance(); }, 250);
+          return;
+        }
+        target = target.parentElement;
+      }
+    };
+    container.addEventListener('click', handleClick);
+    return () => container.removeEventListener('click', handleClick);
+  }, [html, onAdvance]);
+
+  return (
+    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'auto', width: '100%' }}>
+      <div ref={htmlRef} style={{ flex: 1, width: '100%', maxWidth: '100%', overflow: 'hidden' }} dangerouslySetInnerHTML={{ __html: html }} />
+      {pixelCode && <div dangerouslySetInnerHTML={{ __html: pixelCode }} style={{ display: 'none' }} />}
+    </div>
+  );
+}
 
 // ═══ MAIN COMPONENT ═══
 export default function Player() {
@@ -577,7 +1686,7 @@ export default function Player() {
   const [result, setResult] = useState(null);
   const [optionAnim, setOptionAnim] = useState(null);
 
-  useEffect(() => { getQuiz(id).then(q => { if (!q) navigate('/'); else { setQuiz(q); recordEvent(q.id, 'view'); } }); }, [id]);
+  useEffect(() => { getQuiz(id).then(q => { if (!q) navigate('/'); else { setQuiz(q); recordEvent(q.id, 'view'); const hasClone = q.pages?.some(p => p.type === 'html-script'); if (hasClone) { setScreen('playing'); recordEvent(q.id, 'start'); } } }); }, [id]);
 
   const T = useMemo(() => quiz ? buildTheme(quiz) : null, [quiz]);
   const ne = useMemo(() => quiz ? getNicheEmojis(quiz.niche) : NE.outro, [quiz]);
@@ -607,7 +1716,12 @@ export default function Player() {
 
     // Conditional routing: if target is set, jump to that step
     if (effectiveTarget === '__end') {
-      if (isPageBuilder) { setScreen('done'); recordEvent(quiz.id, 'complete'); }
+      if (isPageBuilder) {
+        // Auto-save lead with accumulated answers
+        const as2 = {}; pages.forEach((p, pi) => { if (answers[pi] !== undefined) { as2[p.stepName || p.title || `Etapa ${pi+1}`] = answers[pi]; } });
+        if (Object.keys(as2).length > 0) saveLead(quiz.id, { answers: as2, date: new Date().toISOString(), source: 'auto' });
+        setScreen('done'); recordEvent(quiz.id, 'complete');
+      }
       else if (quiz.collectLead) setScreen('lead');
       else finishQuiz();
       return;
@@ -619,7 +1733,11 @@ export default function Player() {
     // Default: go to next page
     const next = pageIndex + 1;
     if (next >= pages.length) {
-      if (isPageBuilder) { setScreen('done'); recordEvent(quiz.id, 'complete'); }
+      if (isPageBuilder) {
+        const as3 = {}; pages.forEach((p, pi) => { if (answers[pi] !== undefined) { as3[p.stepName || p.title || `Etapa ${pi+1}`] = answers[pi]; } });
+        if (Object.keys(as3).length > 0) saveLead(quiz.id, { answers: as3, date: new Date().toISOString(), source: 'auto' });
+        setScreen('done'); recordEvent(quiz.id, 'complete');
+      }
       else if (quiz.collectLead) setScreen('lead');
       else finishQuiz();
     }
@@ -632,6 +1750,17 @@ export default function Player() {
     const questionAnswers = {};
     let qi = 0;
     pages.forEach((p, pi) => { if (p.type !== 'insight' && p.type !== 'social-proof') { if (answers[pi] !== undefined) questionAnswers[qi] = answers[pi]; qi++; } });
+    // Auto-save lead with accumulated answers from all pages (including clones)
+    const answerSummary = {};
+    pages.forEach((p, pi) => {
+      if (answers[pi] !== undefined) {
+        const label = p.stepName || p.title || p.text || `Etapa ${pi + 1}`;
+        answerSummary[label] = answers[pi];
+      }
+    });
+    if (Object.keys(answerSummary).length > 0) {
+      saveLead(quiz.id, { answers: answerSummary, date: new Date().toISOString(), source: 'auto' });
+    }
     setTimeout(() => { setResult(calculateQuizResult(quiz, questionAnswers)); setScreen('result'); }, 2800);
   };
 
@@ -648,7 +1777,7 @@ export default function Player() {
   const handleMultiToggle = (idx) => setMultiSelect(prev => prev.includes(idx) ? prev.filter(i => i !== idx) : [...prev, idx]);
   const handleMultiSubmit = () => { if (!multiSelect.length) return; setAnswers(a => ({ ...a, [pageIndex]: multiSelect })); recordEvent(quiz.id, 'answer', { questionIndex: pageIndex, optionIndex: multiSelect[0] || 0 }); advancePage(); };
   const handleLeadSubmit = (e) => { e.preventDefault(); saveLead(quiz.id, { ...leadData, answers, result: result?.result?.name || '', date: new Date().toISOString() }); finishQuiz(); };
-  const handleCTA = () => { recordEvent(quiz.id, 'cta_click'); const url = result?.result?.ctaUrl; if (url) window.open(url, '_blank'); };
+  const handleCTA = () => { recordEvent(quiz.id, 'cta_click'); const url = result?.result?.ctaUrl; if (url) window.location.href = url; };
   const goBack = () => { if (pageIndex > 0) { setPageIndex(pageIndex - 1); setMultiSelect([]); setOptionAnim(null); } };
 
   const getOptions = () => (currentPage?.options || []).map(o => typeof o === 'string' ? { text: o, emoji: '' } : o);
@@ -663,8 +1792,21 @@ export default function Player() {
   };
 
   // ── WELCOME ──
-  const welcomeBlock = pages[0]?.type === 'welcome' ? pages[0] : (pages[0]?.type === 'compound' && pages[0]?.blocks?.[0]?.type === 'welcome' ? pages[0].blocks[0] : null);
-  const startQuiz = () => { setScreen('playing'); setPageIndex(welcomeBlock ? 1 : 0); recordEvent(quiz.id, 'start'); };
+  const findWelcome = () => {
+    for (let i = 0; i < Math.min(2, pages.length); i++) {
+      const p = pages[i];
+      if (p?.type === 'welcome' && (p.headline || p.emoji || p.imageUrl)) return { block: p, skipTo: i + 1 };
+      if (p?.type === 'compound' && p.blocks) {
+        const wb = p.blocks.find(b => b.type === 'welcome');
+        if (wb && (wb.headline || wb.emoji || wb.imageUrl)) return { block: wb, skipTo: i + 1 };
+      }
+    }
+    // Fallback: use page 0 if welcome type (even if empty)
+    if (pages[0]?.type === 'welcome') return { block: pages[0], skipTo: 1 };
+    return { block: null, skipTo: 0 };
+  };
+  const { block: welcomeBlock, skipTo: welcomeSkipTo } = findWelcome();
+  const startQuiz = () => { setScreen('playing'); setPageIndex(welcomeSkipTo); recordEvent(quiz.id, 'start'); };
 
   if (screen === 'welcome') return (
     <div style={S.container}>
@@ -828,14 +1970,16 @@ export default function Player() {
   const isStatement = currentPage.type === 'statement';
   const isLikert = currentPage.type === 'likert';
   const isImageSelect = currentPage.type === 'image-select';
-  const isChoice = ['choice', 'picker', 'age-choice'].includes(currentPage.type);
+  const isChoice = ['choice', 'picker', 'age-choice', 'single-choice'].includes(currentPage.type);
+  const isVideoResponse = currentPage.type === 'video-response';
   const phaseEmoji = ne.phases[sectionIdx] || '💭';
 
   return (
     <div style={S.container}>
       <style>{CSS.replace(/var\(--qp-rgb\)/g, T.rgb)}</style>
       <div style={S.inner}>
-        {/* Header */}
+        {/* Header — hide for cloned pages */}
+        {currentPage.type !== 'html-script' && (
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative', padding: '16px 0 6px' }}>
           {pageIndex > 0 && <button style={{ position: 'absolute', left: 0, background: 'none', border: 'none', cursor: 'pointer', color: T.text, padding: 8 }} onClick={goBack}><ChevronLeft size={24} /></button>}
           {quiz.companyName && (
@@ -844,9 +1988,10 @@ export default function Player() {
             </span>
           )}
         </div>
+        )}
 
-        {/* Progress bar — single continuous bar */}
-        {!isInsight && !isSP && (
+        {/* Progress bar — hide for cloned pages, insights, social proof */}
+        {!isInsight && !isSP && currentPage.type !== 'html-script' && (
           <div style={{ marginBottom: 20 }}>
             <div style={{ height: 5, borderRadius: 3, background: `rgba(${T.rgb},.12)`, overflow: 'hidden' }}>
               <div className="qp-progress-fill" style={{ height: '100%', width: `${((pageIndex + 1) / pages.length) * 100}%`, background: T.primary, borderRadius: 3, transition: 'width 0.4s ease' }} />
@@ -1072,7 +2217,32 @@ export default function Player() {
               })()}
 
               {/* ── PAGEBUILDER BLOCK TYPES (text, button, image, video, compound, etc.) ── */}
-              {!isInsight && !isSP && !isMulti && !isStatement && !isChoice && !isLikert && !isImageSelect && (() => {
+              {/* ── VIDEO-RESPONSE ── */}
+              {isVideoResponse && (() => {
+                const opts = currentPage.options || [];
+                return (
+                  <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+                    <h2 style={{ fontWeight: 700, fontSize: '1.3rem', lineHeight: 1.3, textAlign: 'center', marginBottom: 16, color: T.text }}>{currentPage.text}</h2>
+                    {currentPage.videoUrl ? (
+                      <div style={{ position: 'relative', paddingBottom: '56.25%', borderRadius: 16, overflow: 'hidden', marginBottom: 16, background: '#000' }}>
+                        <iframe src={currentPage.videoUrl.replace('watch?v=', 'embed/').replace('youtu.be/', 'youtube.com/embed/')} style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', border: 'none' }} allowFullScreen />
+                      </div>
+                    ) : (
+                      <div style={{ height: 200, background: '#1a1a2e', borderRadius: 16, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 48, marginBottom: 16 }}>🎬</div>
+                    )}
+                    {currentPage.desc && <p style={{ color: T.textSec, fontSize: '0.88rem', textAlign: 'center', marginBottom: 16 }}>{currentPage.desc}</p>}
+                    <div style={{ flex: 1 }}>
+                      {opts.map((opt, i) => (
+                        <div key={i} className={optionAnim === i ? 'qp-option-pop' : ''} style={S.optionCard(optionAnim === i)} onClick={() => handleChoice(i)}>
+                          <span style={{ flex: 1 }}>{typeof opt === 'string' ? opt : opt.text}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {!isInsight && !isSP && !isMulti && !isStatement && !isChoice && !isLikert && !isImageSelect && !isVideoResponse && (() => {
                 const p = currentPage;
                 const type = p.type;
 
@@ -1097,6 +2267,8 @@ export default function Player() {
                     if (bType === 'price') return <div key={i} style={{ background: T.card, borderRadius: 18, padding: '20px 16px', border: `1px solid ${T.border}`, marginBottom: 12, textAlign: 'center' }}><h3 style={{ fontSize: '1.1rem', fontWeight: 700, marginBottom: 8 }}>{b.title}</h3>{b.originalPrice && <div style={{ fontSize: '0.85rem', color: T.textMuted, textDecoration: 'line-through' }}>{b.originalPrice}</div>}<div style={{ fontSize: '1.8rem', fontWeight: 800, color: T.primary }}>{b.price}</div>{b.discount && <span style={{ padding: '3px 10px', borderRadius: 6, background: `rgba(${T.rgb},.1)`, color: T.primary, fontSize: '0.75rem', fontWeight: 700 }}>{b.discount}</span>}{(b.features || []).length > 0 && <ul style={{ listStyle: 'none', padding: 0, margin: '12px 0 0', textAlign: 'left' }}>{b.features.map((f, fi) => <li key={fi} style={{ display: 'flex', gap: 6, alignItems: 'center', padding: '4px 0', fontSize: '0.85rem', color: T.textSec }}><span style={{ color: T.primary }}>✓</span>{f}</li>)}</ul>}</div>;
                     if (bType === 'arguments') return <div key={i} style={{ marginBottom: 12 }}><h3 style={{ fontSize: '1rem', fontWeight: 700, marginBottom: 10 }}>{b.title}</h3><ul style={{ listStyle: 'none', padding: 0 }}>{(b.items || []).map((item, ii) => <li key={ii} style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '8px 0', borderBottom: `1px solid ${T.border}`, fontSize: '0.9rem', color: T.textSec }}><span style={{ fontSize: 16 }}>{b.emoji || '✅'}</span>{item}</li>)}</ul></div>;
                     if (bType === 'loading') return <LoadingBlock key={i} title={b.title} items={b.items} T={T} onDone={advancePage} />;
+                    if (bType === 'progress-bar') return <ProgressBarBlock key={i} title={b.title} items={b.items} duration={b.duration} T={T} onDone={advancePage} />;
+                    if (bType === 'risk-chart') return <RiskChartBlock key={i} title={b.title} labels={b.labels} userPosition={b.userPosition} duration={b.duration} T={T} onDone={advancePage} />;
                     if (bType === 'yes-no') return <div key={i} style={{ marginBottom: 12 }}><h3 style={{ fontSize: '1.1rem', fontWeight: 700, textAlign: 'center', marginBottom: 16, color: T.text }}>{b.text}</h3><div style={{ display: 'flex', gap: 12 }}>{[{ label: b.yesLabel || 'Sim', emoji: b.yesEmoji || '✅', val: 'yes' }, { label: b.noLabel || 'Não', emoji: b.noEmoji || '🚫', val: 'no' }].map((opt, oi) => <div key={oi} style={{ flex: 1, padding: '18px 12px', borderRadius: 16, border: `2px solid ${answers[pageIndex] === opt.val ? T.primary : T.border}`, background: answers[pageIndex] === opt.val ? `rgba(${T.rgb},.06)` : T.card, cursor: 'pointer', textAlign: 'center', transition: 'all 0.2s' }} onClick={() => { setAnswers(a => ({ ...a, [pageIndex]: opt.val })); recordEvent(quiz.id, 'answer', { questionIndex: pageIndex, value: opt.val }); setTimeout(advancePage, 400); }}><div style={{ fontSize: '2rem', marginBottom: 6 }}>{opt.emoji}</div><div style={{ fontWeight: 600, fontSize: '0.95rem', color: T.text }}>{opt.label}</div></div>)}</div></div>;
                     if (bType === 'before-after') return <div key={i} style={{ marginBottom: 12 }}><h3 style={{ fontSize: '1rem', fontWeight: 700, textAlign: 'center', marginBottom: 12, color: T.text }}>{b.title}</h3><div style={{ display: 'flex', gap: 12 }}>{[{ label: b.beforeLabel || 'Antes', img: b.beforeImage, color: '#ef4444' }, { label: b.afterLabel || 'Depois', img: b.afterImage, color: '#22c55e' }].map((side, si) => <div key={si} style={{ flex: 1, borderRadius: 14, overflow: 'hidden', border: `2px solid ${side.color}20`, background: T.card }}>{side.img ? <img src={side.img} alt={side.label} style={{ width: '100%', height: 120, objectFit: 'cover' }} /> : <div style={{ width: '100%', height: 120, background: `${side.color}10`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 32 }}>{si === 0 ? '😔' : '😊'}</div>}<div style={{ padding: '8px 10px', textAlign: 'center', fontWeight: 700, fontSize: '0.82rem', color: side.color, background: `${side.color}08` }}>{side.label}</div></div>)}</div></div>;
                     if (bType === 'insight') return <div key={i} style={{ background: `rgba(${T.rgb},.04)`, borderRadius: 16, padding: '16px 14px', border: `1px solid rgba(${T.rgb},.1)`, marginBottom: 12 }}><h4 style={{ fontSize: '0.95rem', fontWeight: 700, color: T.primary, marginBottom: 6 }}>{b.title || '💡 Dica'}</h4><p style={{ fontSize: '0.88rem', color: T.textSec, margin: 0, lineHeight: 1.6 }}>{b.body}</p></div>;
@@ -1108,6 +2280,20 @@ export default function Player() {
                     if (bType === 'scroll-picker') return <ScrollPickerBlock key={i} page={b} T={T} onDone={(val) => { setAnswers(a => ({ ...a, [pageIndex]: val })); recordEvent(quiz.id, 'answer', { questionIndex: pageIndex, value: val }); advancePage(); }} />;
                     if (bType === 'number-input') return <NumberInputBlock key={i} page={b} T={T} onDone={(val) => { setAnswers(a => ({ ...a, [pageIndex]: val })); recordEvent(quiz.id, 'answer', { questionIndex: pageIndex, value: val }); advancePage(); }} />;
                     if (bType === 'result') return <AIResultBlock key={i} page={b} quiz={quiz} answers={answers} pages={pages} T={T} />;
+                    if (bType === 'video-response') return <div key={i} style={{ marginBottom: 12 }}><h3 style={{ fontSize: '1.1rem', fontWeight: 700, textAlign: 'center', marginBottom: 12, color: T.text }}>{b.text}</h3>{b.videoUrl ? <div style={{ position: 'relative', paddingBottom: '56.25%', borderRadius: 16, overflow: 'hidden', marginBottom: 12, background: '#000' }}><iframe src={b.videoUrl.replace('watch?v=', 'embed/').replace('youtu.be/', 'youtube.com/embed/')} style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', border: 'none' }} allowFullScreen /></div> : <div style={{ height: 180, background: '#1a1a2e', borderRadius: 16, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 48, marginBottom: 12 }}>🎬</div>}{(b.options || []).map((opt, oi) => <div key={oi} style={S.optionCard(false)} onClick={() => { setAnswers(a => ({ ...a, [pageIndex]: oi })); recordEvent(quiz.id, 'answer', { questionIndex: pageIndex, optionIndex: oi }); setTimeout(advancePage, 400); }}><span style={{ flex: 1 }}>{typeof opt === 'string' ? opt : opt.text}</span></div>)}</div>;
+                    if (bType === 'audio') return <div key={i} style={{ marginBottom: 12 }}>{b.senderName && <p style={{ fontWeight: 600, fontSize: '0.85rem', color: T.text, marginBottom: 6 }}>{b.senderName}</p>}{b.audioUrl ? <audio controls style={{ width: '100%', borderRadius: 12 }} src={b.audioUrl} /> : <div style={{ height: 60, background: T.insightBg, borderRadius: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24, color: T.textMuted }}>🔊 Áudio não configurado</div>}</div>;
+                    if (bType === 'logo') return <div key={i} style={{ textAlign: 'center', marginBottom: 12 }}>{b.imageUrl ? <img src={b.imageUrl} alt={b.alt || 'Logo'} style={{ maxWidth: b.maxWidth || 120, height: 'auto' }} /> : <div style={{ fontSize: 32, color: T.textMuted }}>◎</div>}</div>;
+                    if (bType === 'spacer') return <div key={i} style={{ height: b.height || 40 }} />;
+                    if (bType === 'welcome') return <div key={i} style={{ textAlign: b.textAlign || 'center', marginBottom: 12 }}>{b.imageUrl && b.imagePosition === 'top' && <img src={b.imageUrl} alt="" style={{ width: `${b.imageWidth || 100}%`, height: b.imageHeightPx || 200, objectFit: 'cover', borderRadius: 16, marginBottom: 12 }} />}{b.emoji && <div style={{ fontSize: 48, marginBottom: 8 }}>{b.emoji}</div>}{b.headline && <h2 style={{ fontSize: '1.4rem', fontWeight: 800, color: T.text, marginBottom: 6 }}>{b.headline}</h2>}{b.subtitle && <p style={{ color: T.textSec, fontSize: '0.9rem' }}>{b.subtitle}</p>}{b.imageUrl && b.imagePosition !== 'top' && <img src={b.imageUrl} alt="" style={{ width: `${b.imageWidth || 100}%`, height: b.imageHeightPx || 200, objectFit: 'cover', borderRadius: 16, marginTop: 12 }} />}</div>;
+                    if (bType === 'notification') return <div key={i} style={{ background: T.card, borderRadius: 14, padding: '14px 16px', border: `1px solid ${T.border}`, marginBottom: 12, display: 'flex', gap: 10, alignItems: 'center', boxShadow: '0 4px 12px rgba(0,0,0,.08)' }}><span style={{ fontSize: 24 }}>{b.icon || '🔔'}</span><div><div style={{ fontWeight: 700, fontSize: '0.9rem', color: T.text }}>{b.title}</div><div style={{ fontSize: '0.82rem', color: T.textSec }}>{b.text}</div></div></div>;
+                    if (bType === 'level') return <div key={i} style={{ marginBottom: 12 }}><div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}><span style={{ fontWeight: 700, fontSize: '0.9rem', color: T.text }}>{b.title}</span><span style={{ fontWeight: 700, fontSize: '0.85rem', color: b.color || T.primary }}>{b.label}</span></div><div style={{ height: 10, borderRadius: 5, background: T.border }}><div style={{ height: '100%', width: `${((b.value || 0) / (b.maxValue || 5)) * 100}%`, borderRadius: 5, background: b.color || T.primary, transition: 'width 0.5s' }} /></div></div>;
+                    if (bType === 'faq') return <div key={i} style={{ marginBottom: 12 }}>{b.title && <h3 style={{ fontSize: '1rem', fontWeight: 700, marginBottom: 10, color: T.text }}>{b.title}</h3>}{(b.items || []).map((item, fi) => <details key={fi} style={{ borderBottom: `1px solid ${T.border}`, padding: '10px 0' }}><summary style={{ cursor: 'pointer', fontWeight: 600, fontSize: '0.9rem', color: T.text }}>{item.q}</summary><p style={{ fontSize: '0.85rem', color: T.textSec, margin: '8px 0 0', lineHeight: 1.6 }}>{item.a}</p></details>)}</div>;
+                    if (bType === 'carousel') return <div key={i} style={{ marginBottom: 12 }}>{b.title && <h3 style={{ fontSize: '1rem', fontWeight: 700, marginBottom: 10, color: T.text }}>{b.title}</h3>}<div style={{ display: 'flex', gap: 10, overflowX: 'auto', paddingBottom: 8 }}>{(b.slides || []).map((slide, si) => <div key={si} style={{ minWidth: 200, flex: '0 0 auto', borderRadius: 14, overflow: 'hidden', border: `1px solid ${T.border}`, background: T.card }}>{slide.image && <img src={slide.image} alt="" style={{ width: '100%', height: 120, objectFit: 'cover' }} />}<div style={{ padding: '10px 12px', fontSize: '0.85rem', color: T.text }}>{slide.text}</div></div>)}</div></div>;
+                    if (bType === 'single-choice') return <div key={i} style={{ marginBottom: 12 }}><h3 style={{ fontSize: '1.1rem', fontWeight: 700, textAlign: 'center', marginBottom: 12, color: T.text }}>{b.text}</h3>{(b.options || []).map((opt, oi) => <div key={oi} style={S.optionCard(false)} onClick={() => { setAnswers(a => ({ ...a, [pageIndex]: oi })); recordEvent(quiz.id, 'answer', { questionIndex: pageIndex, optionIndex: oi }); setTimeout(advancePage, 400); }}><span style={{ flex: 1 }}>{typeof opt === 'string' ? opt : opt.text}</span></div>)}</div>;
+                    if (bType === 'weight-picker') return <ScrollPickerBlock key={i} page={b} T={T} onDone={(val) => { setAnswers(a => ({ ...a, [pageIndex]: val })); recordEvent(quiz.id, 'answer', { questionIndex: pageIndex, value: val }); advancePage(); }} />;
+                    if (bType === 'email-input' || bType === 'phone-input' || bType === 'textarea-input' || bType === 'date-input') { const inputType = bType === 'email-input' ? 'email' : bType === 'phone-input' ? 'tel' : bType === 'date-input' ? 'date' : 'text'; return <div key={i} style={{ marginBottom: 12 }}><h3 style={{ fontSize: '1rem', fontWeight: 700, marginBottom: 10, color: T.text }}>{b.text}</h3>{bType === 'textarea-input' ? <textarea style={{ width: '100%', padding: '12px 16px', borderRadius: 12, border: `1.5px solid ${T.border}`, fontSize: '0.9rem', outline: 'none', minHeight: 80, resize: 'vertical', boxSizing: 'border-box' }} placeholder={b.placeholder} onChange={e => setLeadData(d => ({ ...d, [bType]: e.target.value }))} /> : <input type={inputType} style={{ width: '100%', padding: '12px 16px', borderRadius: 12, border: `1.5px solid ${T.border}`, fontSize: '0.9rem', outline: 'none', boxSizing: 'border-box' }} placeholder={b.placeholder} onChange={e => setLeadData(d => ({ ...d, [bType]: e.target.value }))} />}</div>; }
+                    if (bType === 'html-script') return <div key={i} style={{ marginBottom: 12 }} dangerouslySetInnerHTML={{ __html: b.code || '' }} />;
+                    if (bType === 'metrics') return <div key={i} style={{ background: T.card, borderRadius: 16, padding: '18px 16px', border: `1px solid ${T.border}`, marginBottom: 12, textAlign: 'center' }}><h3 style={{ fontSize: '1rem', fontWeight: 700, color: T.text, marginBottom: 4 }}>{b.title}</h3><p style={{ fontSize: '0.85rem', color: T.textSec }}>{b.text}</p></div>;
                     return <div key={i} style={{ marginBottom: 12, color: T.textSec, fontSize: '0.9rem' }}>{b.text || b.content || b.title || ''}</div>;
                   };
                   return (
@@ -1207,6 +2393,16 @@ export default function Player() {
                   return <LoadingBlock title={p.title} items={p.items} T={T} onDone={advancePage} />;
                 }
 
+                // Progress bar block
+                if (type === 'progress-bar') {
+                  return <ProgressBarBlock title={p.title} items={p.items} duration={p.duration} T={T} onDone={advancePage} />;
+                }
+
+                // Risk chart block
+                if (type === 'risk-chart') {
+                  return <RiskChartBlock title={p.title} labels={p.labels} userPosition={p.userPosition} duration={p.duration} T={T} onDone={advancePage} />;
+                }
+
                 // Price block
                 if (type === 'price') {
                   return (
@@ -1248,12 +2444,34 @@ export default function Player() {
                   );
                 }
 
-                // Chart block (simple bar visualization)
+                // Chart block (animated bar visualization)
                 if (type === 'chart') {
+                  const chartColor = p.chartColor || T.primary;
+                  const chartData = p.data || [];
                   return (
                     <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+                      <style>{`
+                        @keyframes chartBarGrow { from { width: 0%; } }
+                        @keyframes chartValueFade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+                      `}</style>
                       {p.title && <h3 style={{ fontSize: '1.1rem', fontWeight: 700, marginBottom: 16, color: T.text }}>{p.title}</h3>}
-                      <div style={{ flex: 1 }}>{(p.data || []).map((d, i) => <div key={i} style={{ marginBottom: 12 }}><div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.82rem', marginBottom: 4 }}><span style={{ color: T.text }}>{d.label}</span><span style={{ color: T.primary, fontWeight: 600 }}>{d.value}%</span></div><div style={{ height: 8, borderRadius: 4, background: T.border }}><div style={{ height: '100%', width: `${d.value}%`, borderRadius: 4, background: p.chartColor || T.primary, transition: 'width 0.5s' }} /></div></div>)}</div>
+                      <div style={{ flex: 1 }}>{chartData.map((d, i) => (
+                        <div key={i} style={{ marginBottom: 14 }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.82rem', marginBottom: 5 }}>
+                            <span style={{ color: T.text, fontWeight: 500 }}>{d.label}</span>
+                            <span style={{ color: chartColor, fontWeight: 700, animation: `chartValueFade 0.6s ease ${0.3 + i * 0.2}s both` }}>{d.value}%</span>
+                          </div>
+                          <div style={{ height: 10, borderRadius: 5, background: T.border, overflow: 'hidden' }}>
+                            <div style={{
+                              height: '100%',
+                              width: `${d.value}%`,
+                              borderRadius: 5,
+                              background: `linear-gradient(90deg, ${chartColor}, ${chartColor}cc)`,
+                              animation: `chartBarGrow 1.2s cubic-bezier(0.25,0.46,0.45,0.94) ${i * 0.2}s both`,
+                            }} />
+                          </div>
+                        </div>
+                      ))}</div>
                       <button style={S.btn(false)} onClick={advancePage}>Continuar</button>
                     </div>
                   );
@@ -1312,6 +2530,124 @@ export default function Player() {
                       <button style={S.btn(false)} onClick={advancePage}>Continuar</button>
                     </div>
                   );
+                }
+
+                // Audio block
+                if (type === 'audio') {
+                  return (
+                    <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+                      {p.senderName && <p style={{ fontWeight: 600, fontSize: '0.95rem', color: T.text, marginBottom: 10 }}>{p.senderName}</p>}
+                      {p.audioUrl ? <audio controls style={{ width: '100%', borderRadius: 12, marginBottom: 16 }} src={p.audioUrl} /> : <div style={{ height: 80, background: T.insightBg, borderRadius: 16, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 32, color: T.textMuted, marginBottom: 16 }}>🔊 Áudio não configurado</div>}
+                      <button style={S.btn(false)} onClick={advancePage}>Continuar</button>
+                    </div>
+                  );
+                }
+
+                // Logo block
+                if (type === 'logo') {
+                  return (
+                    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+                      {p.imageUrl ? <img src={p.imageUrl} alt={p.alt || 'Logo'} style={{ maxWidth: p.maxWidth || 120, height: 'auto', marginBottom: 16 }} /> : <div style={{ fontSize: 48, color: T.textMuted, marginBottom: 16 }}>◎</div>}
+                      <button style={S.btn(false)} onClick={advancePage}>Continuar</button>
+                    </div>
+                  );
+                }
+
+                // Spacer block
+                if (type === 'spacer') {
+                  return (
+                    <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+                      <div style={{ height: p.height || 40 }} />
+                      <button style={S.btn(false)} onClick={advancePage}>Continuar</button>
+                    </div>
+                  );
+                }
+
+                // Notification block
+                if (type === 'notification') {
+                  return (
+                    <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+                      <div style={{ background: T.card, borderRadius: 16, padding: '18px 20px', border: `1px solid ${T.border}`, display: 'flex', gap: 12, alignItems: 'center', boxShadow: '0 4px 16px rgba(0,0,0,.1)', marginBottom: 16 }}>
+                        <span style={{ fontSize: 28 }}>{p.icon || '🔔'}</span>
+                        <div><div style={{ fontWeight: 700, fontSize: '0.95rem', color: T.text }}>{p.title}</div><div style={{ fontSize: '0.85rem', color: T.textSec, marginTop: 2 }}>{p.text}</div></div>
+                      </div>
+                      <button style={S.btn(false)} onClick={advancePage}>Continuar</button>
+                    </div>
+                  );
+                }
+
+                // Level block
+                if (type === 'level') {
+                  return (
+                    <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+                      <div style={{ marginBottom: 16 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}><span style={{ fontWeight: 700, fontSize: '1rem', color: T.text }}>{p.title}</span><span style={{ fontWeight: 700, fontSize: '0.9rem', color: p.color || T.primary }}>{p.label}</span></div>
+                        <div style={{ height: 12, borderRadius: 6, background: T.border }}><div style={{ height: '100%', width: `${((p.value || 0) / (p.maxValue || 5)) * 100}%`, borderRadius: 6, background: p.color || T.primary, transition: 'width 0.5s' }} /></div>
+                      </div>
+                      <button style={S.btn(false)} onClick={advancePage}>Continuar</button>
+                    </div>
+                  );
+                }
+
+                // FAQ block
+                if (type === 'faq') {
+                  return (
+                    <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+                      {p.title && <h2 style={{ fontSize: '1.2rem', fontWeight: 700, marginBottom: 16, color: T.text }}>{p.title}</h2>}
+                      <div style={{ flex: 1 }}>{(p.items || []).map((item, i) => <details key={i} style={{ borderBottom: `1px solid ${T.border}`, padding: '12px 0' }}><summary style={{ cursor: 'pointer', fontWeight: 600, fontSize: '0.95rem', color: T.text }}>{item.q}</summary><p style={{ fontSize: '0.88rem', color: T.textSec, margin: '8px 0 0', lineHeight: 1.6 }}>{item.a}</p></details>)}</div>
+                      <button style={S.btn(false)} onClick={advancePage}>Continuar</button>
+                    </div>
+                  );
+                }
+
+                // Carousel block
+                if (type === 'carousel') {
+                  return (
+                    <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+                      {p.title && <h2 style={{ fontSize: '1.2rem', fontWeight: 700, marginBottom: 16, color: T.text }}>{p.title}</h2>}
+                      <div style={{ display: 'flex', gap: 12, overflowX: 'auto', paddingBottom: 10, flex: 1 }}>{(p.slides || []).map((slide, i) => <div key={i} style={{ minWidth: 220, flex: '0 0 auto', borderRadius: 16, overflow: 'hidden', border: `1px solid ${T.border}`, background: T.card }}>{slide.image && <img src={slide.image} alt="" style={{ width: '100%', height: 140, objectFit: 'cover' }} />}<div style={{ padding: '12px 14px', fontSize: '0.9rem', color: T.text }}>{slide.text}</div></div>)}</div>
+                      <button style={S.btn(false)} onClick={advancePage}>Continuar</button>
+                    </div>
+                  );
+                }
+
+                // Weight picker
+                if (type === 'weight-picker') {
+                  return <ScrollPickerBlock page={p} T={T} onDone={(val) => { setAnswers(a => ({ ...a, [pageIndex]: val })); recordEvent(quiz.id, 'answer', { questionIndex: pageIndex, value: val }); advancePage(); }} />;
+                }
+
+                // Form input types
+                if (['email-input', 'phone-input', 'textarea-input', 'date-input'].includes(type)) {
+                  const inputType = type === 'email-input' ? 'email' : type === 'phone-input' ? 'tel' : type === 'date-input' ? 'date' : 'text';
+                  return (
+                    <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+                      <h2 style={{ fontSize: '1.2rem', fontWeight: 700, textAlign: 'center', marginBottom: 16, color: T.text }}>{p.text}</h2>
+                      {type === 'textarea-input' ? (
+                        <textarea style={{ width: '100%', padding: '14px 18px', borderRadius: 14, border: `1.5px solid ${T.border}`, fontSize: '0.95rem', outline: 'none', minHeight: 100, resize: 'vertical', boxSizing: 'border-box', background: T.card, color: T.text }} placeholder={p.placeholder} onChange={e => setLeadData(d => ({ ...d, [type]: e.target.value }))} />
+                      ) : (
+                        <input type={inputType} style={{ width: '100%', padding: '14px 18px', borderRadius: 14, border: `1.5px solid ${T.border}`, fontSize: '0.95rem', outline: 'none', boxSizing: 'border-box', background: T.card, color: T.text }} placeholder={p.placeholder} onChange={e => setLeadData(d => ({ ...d, [type]: e.target.value }))} />
+                      )}
+                      <button style={{ ...S.btn(false), marginTop: 16 }} onClick={() => { recordEvent(quiz.id, 'answer', { questionIndex: pageIndex, value: leadData[type] || '' }); advancePage(); }}>Continuar</button>
+                    </div>
+                  );
+                }
+
+                // Metrics block
+                if (type === 'metrics') {
+                  return (
+                    <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+                      <div style={{ background: T.card, borderRadius: 20, padding: '24px 20px', border: `1px solid ${T.border}`, marginBottom: 16, textAlign: 'center' }}>
+                        <h2 style={{ fontSize: '1.2rem', fontWeight: 700, color: T.text, marginBottom: 6 }}>{p.title}</h2>
+                        <p style={{ fontSize: '0.9rem', color: T.textSec }}>{p.text}</p>
+                      </div>
+                      <button style={S.btn(false)} onClick={advancePage}>Continuar</button>
+                    </div>
+                  );
+                }
+
+                // HTML/Script block — cloned pages with full HTML
+                if (type === 'html-script') {
+                  return <ClonedPageBlock html={p.code || ''} fullCode={p.fullCode || ''} onAdvance={advancePage} btnStyle={S.btn(false)} buttonActions={p.buttonActions} pixelCode={p.pixelCode} clonePageType={p.clonePageType} quizId={quiz?.id} pageIndex={pageIndex} setAnswers={setAnswers} />;
                 }
 
                 // Fallback for truly unknown types

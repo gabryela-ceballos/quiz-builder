@@ -1,19 +1,23 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Sparkles, Loader2, Check, Copy, Eye, Search, Zap, Link, PenTool } from 'lucide-react';
+import { ArrowLeft, Sparkles, Loader2, Check, Copy, Eye, Search, Zap, Link, PenTool, AlertTriangle } from 'lucide-react';
 import DomainSettings from '../components/DomainSettings';
 import { generateQuiz, NICHES } from '../utils/quizGenerator';
 import { saveQuiz, getQuiz } from '../hooks/useQuizStore';
 import { cloneFromUrl } from '../utils/cloneService';
+import { consumeQuota } from '../hooks/useAuth';
 
 const STEPS = ['Produto', 'Configurar', 'Publicar'];
 
 export default function Builder() {
   const navigate = useNavigate();
-  // Auto-detect mode from URL params
-  const urlMode = new URLSearchParams(window.location.search).get('mode');
-  const [step, setStep] = useState(urlMode === 'ai' ? 0 : -1);
-  const [creationMode, setCreationMode] = useState(urlMode === 'ai' ? 'ai' : '');
+  // Capture mode ONCE on mount — never re-evaluate
+  const modeRef = useRef(new URLSearchParams(window.location.search));
+  const urlMode = modeRef.current.get('mode');
+  const funnelName = modeRef.current.get('name') || '';
+  const validMode = urlMode && ['ai', 'clone'].includes(urlMode);
+  const [step, setStep] = useState(0);
+  const [creationMode] = useState(urlMode || 'ai');
   const [generating, setGenerating] = useState(false);
   const [genPhase, setGenPhase] = useState('');
   const [genError, setGenError] = useState('');
@@ -28,17 +32,17 @@ export default function Builder() {
   const [questionCount, setQCount] = useState(15);
   const [useConditionals, setUseConditionals] = useState(false);
   const [customInstructions, setCustomInstructions] = useState('');
+  const [language, setLanguage] = useState('pt');
 
   // Clone state
   const [cloneUrl, setCloneUrl] = useState('');
   const [cloning, setCloning] = useState(false);
   const [clonePhase, setClonePhase] = useState('');
 
-  const selectMode = (mode) => {
-    if (mode === 'builder') { navigate('/builder/page'); return; }
-    setCreationMode(mode);
-    setStep(0);
-  };
+  // Redirect to home if no valid mode (only on mount)
+  useEffect(() => { if (!validMode) navigate('/'); }, []);
+  if (!validMode) return null;
+
 
   // Clone handler — clones quiz and publishes directly (no config screens)
   const handleClone = async () => {
@@ -65,12 +69,9 @@ export default function Builder() {
         clonedQuiz = await cloneFromUrl(cloneUrl, (phase, msg) => setClonePhase(msg || phase));
       }
 
-      // Save & publish directly — no configure screens
-      setClonePhase('✅ Publicando clone...');
-      const saved = await saveQuiz(clonedQuiz);
+      // Go to review step instead of publishing directly
       setQuiz(clonedQuiz);
-      setPublished(saved);
-      setStep(2); // Go straight to "Published!" screen
+      setStep(1); // Go to review screen
     } catch (err) {
       setGenError(err.message || 'Erro ao clonar. Verifique o link.');
     } finally {
@@ -100,6 +101,7 @@ export default function Builder() {
           questionCount,
           useConditionals,
           customInstructions,
+          language,
         }),
       });
 
@@ -110,11 +112,14 @@ export default function Builder() {
 
       const q = await res.json();
 
+      // Consume AI quota — only after successful generation
+      try { await consumeQuota('ai'); } catch (e) { /* don't block navigation */ }
+
       // Navigate to PageBuilder with AI-generated data
       navigate('/builder/page', {
         state: {
           cloneData: {
-            quizName: q.name || `Quiz: ${product.name}`,
+            quizName: funnelName || q.name || `Quiz: ${product.name}`,
             primaryColor: q.primaryColor || '#2563eb',
             niche: q.niche || niche,
             steps: q.steps || [],
@@ -151,48 +156,13 @@ export default function Builder() {
     <div className="page" style={{ position: 'relative', zIndex: 1 }}>
       <div className="container" style={{ maxWidth: 760 }}>
 
-        {/* ── Mode Selector (step -1) ── */}
-        {step === -1 && (
-          <div className="animate-in">
-            <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 40 }}>
-              <button className="btn btn-ghost btn-sm" onClick={() => navigate('/')}><ArrowLeft size={16} /> Voltar</button>
-            </div>
-            <div style={{ textAlign: 'center', marginBottom: 36 }}>
-              <h2 style={{ marginBottom: 8 }}>Como você quer criar seu quiz?</h2>
-              <p>Escolha o modo de criação que melhor se adapta às suas necessidades.</p>
-            </div>
-            <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', justifyContent: 'center' }}>
-              <div style={modeCardStyle(false)} onClick={() => selectMode('ai')}
-                onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--primary)'; e.currentTarget.style.boxShadow = 'var(--shadow-md)'; }}
-                onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.boxShadow = 'var(--shadow-sm)'; }}>
-                <Sparkles size={36} style={{ color: 'var(--primary)', marginBottom: 12 }} />
-                <h3 style={{ marginBottom: 6, fontSize: '1.1rem' }}>🤖 Gerar com IA</h3>
-                <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', lineHeight: 1.5 }}>Descreva seu produto e a IA cria o quiz completo automaticamente.</p>
-              </div>
-              <div style={modeCardStyle(false)} onClick={() => selectMode('clone')}
-                onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--primary)'; e.currentTarget.style.boxShadow = 'var(--shadow-md)'; }}
-                onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.boxShadow = 'var(--shadow-sm)'; }}>
-                <Link size={36} style={{ color: 'var(--success)', marginBottom: 12 }} />
-                <h3 style={{ marginBottom: 6, fontSize: '1.1rem' }}>🔗 Clonar de URL</h3>
-                <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', lineHeight: 1.5 }}>Cole um link de quiz e recrie com nosso gerador. Edite antes de publicar.</p>
-              </div>
-              <div style={modeCardStyle(false)} onClick={() => selectMode('builder')}
-                onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--primary)'; e.currentTarget.style.boxShadow = 'var(--shadow-md)'; }}
-                onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.boxShadow = 'var(--shadow-sm)'; }}>
-                <PenTool size={36} style={{ color: 'var(--warning)', marginBottom: 12 }} />
-                <h3 style={{ marginBottom: 6, fontSize: '1.1rem' }}>🧱 Page Builder</h3>
-                <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', lineHeight: 1.5 }}>Monte do zero com blocos arrastáveis, imagens e controle total.</p>
-              </div>
-            </div>
-          </div>
-        )}
 
         {/* ── Steps 0-2: AI Generator / Clone flow ── */}
         {step >= 0 && (
           <>
             {/* Nav */}
             <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 40 }}>
-              <button className="btn btn-ghost btn-sm" onClick={() => { setStep(-1); setCreationMode(''); setGenError(''); }}><ArrowLeft size={16} /> Modos</button>
+              <button className="btn btn-ghost btn-sm" onClick={() => navigate('/')}><ArrowLeft size={16} /> Voltar</button>
               <div style={{ flex: 1 }}>
                 <div style={{ display: 'flex', gap: 0, alignItems: 'center' }}>
                   {STEPS.map((s, i) => (
@@ -301,6 +271,37 @@ export default function Builder() {
                   <p style={{ marginTop: 10, fontSize: '0.8rem', color: 'var(--text-muted)' }}>⚡ Páginas de dica são inseridas automaticamente entre seções</p>
                 </div>
 
+                {/* Language selector */}
+                <div className="card" style={{ padding: 24, marginBottom: 28 }}>
+                  <label className="label" style={{ marginBottom: 14 }}>🌐 Idioma do quiz *</label>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 8 }}>
+                    {[
+                      { id: 'pt', label: 'Português', flag: '🇧🇷' },
+                      { id: 'en', label: 'English', flag: '🇺🇸' },
+                      { id: 'es', label: 'Español', flag: '🇪🇸' },
+                      { id: 'fr', label: 'Français', flag: '🇫🇷' },
+                      { id: 'it', label: 'Italiano', flag: '🇮🇹' },
+                      { id: 'de', label: 'Deutsch', flag: '🇩🇪' },
+                      { id: 'nl', label: 'Nederlands', flag: '🇳🇱' },
+                      { id: 'ja', label: '日本語', flag: '🇯🇵' },
+                    ].map(l => (
+                      <button key={l.id} onClick={() => setLanguage(l.id)}
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: 8, padding: '10px 14px', borderRadius: 10,
+                          border: language === l.id ? '2px solid var(--primary)' : '1px solid var(--border)',
+                          background: language === l.id ? 'rgba(37,99,235,0.06)' : '#fff',
+                          color: language === l.id ? 'var(--primary)' : 'var(--text-secondary)',
+                          cursor: 'pointer', fontSize: '0.85rem', fontWeight: language === l.id ? 600 : 400,
+                          transition: 'var(--transition)',
+                        }}>
+                        <span style={{ fontSize: '1.2rem' }}>{l.flag}</span>
+                        {l.label}
+                      </button>
+                    ))}
+                  </div>
+                  <p style={{ marginTop: 10, fontSize: '0.8rem', color: 'var(--text-muted)' }}>A IA vai gerar todas as perguntas, opções e textos neste idioma</p>
+                </div>
+
                 {/* Custom instructions (optional) */}
                 <div className="card" style={{ padding: 24, marginBottom: 28 }}>
                   <label className="label" style={{ marginBottom: 8 }}>Instruções personalizadas <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>(opcional)</span></label>
@@ -350,8 +351,86 @@ export default function Builder() {
               </div>
             )}
 
-            {/* ── Step 1: Configure ── */}
-            {step === 1 && quiz && (
+            {/* ── Step 1 (Clone): Review flagged pages ── */}
+            {step === 1 && quiz && creationMode === 'clone' && (
+              <div className="animate-in">
+                <div style={{ textAlign: 'center', marginBottom: 28 }}>
+                  <div style={{ fontSize: '3rem', marginBottom: 10 }}>📋</div>
+                  <h2 style={{ marginBottom: 6 }}>Revise as páginas do seu quiz</h2>
+                  {(() => {
+                    const warningCount = (quiz.pages || []).filter(p => (p.warnings || []).length > 0).length;
+                    return warningCount > 0
+                      ? <p style={{ color: '#d97706' }}><AlertTriangle size={14} style={{ display: 'inline', verticalAlign: -2 }} /> {warningCount} página{warningCount > 1 ? 's' : ''} precisa{warningCount > 1 ? 'm' : ''} de atenção</p>
+                      : <p style={{ color: 'var(--success)' }}>✅ Todas as páginas estão OK!</p>;
+                  })()}
+                </div>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxHeight: 500, overflowY: 'auto', marginBottom: 24, paddingRight: 4 }}>
+                  {(quiz.pages || []).map((p, i) => {
+                    const hasWarnings = (p.warnings || []).length > 0;
+                    const typeIcons = { choice: '📝', 'multi-select': '☑️', insight: '💡', input: '🎚️', loading: '⏳', statement: '💬', result: '🏆', welcome: '👋', lead: '📧' };
+                    return (
+                      <div key={i} style={{
+                        padding: '14px 18px', borderRadius: 12,
+                        background: hasWarnings ? 'rgba(217,119,6,0.04)' : '#f9fafb',
+                        border: hasWarnings ? '1.5px solid rgba(217,119,6,0.35)' : '1px solid var(--border)',
+                        transition: 'var(--transition)',
+                      }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: hasWarnings ? 8 : 0 }}>
+                          <div style={{
+                            width: 28, height: 28, borderRadius: '50%',
+                            background: hasWarnings ? '#d97706' : 'var(--primary)',
+                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                            fontSize: '0.7rem', fontWeight: 700, color: '#fff', flexShrink: 0,
+                          }}>{i + 1}</div>
+                          <span style={{ fontSize: '1.1rem', flexShrink: 0 }}>{typeIcons[p.clonePageType] || '📄'}</span>
+                          <span style={{
+                            flex: 1, fontSize: '0.85rem', color: 'var(--text-secondary)',
+                            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                          }}>{p.text || p.title || '(sem texto)'}</span>
+                          <span className="badge" style={{ fontSize: '0.65rem', background: '#f3f4f6', flexShrink: 0 }}>{p.clonePageType}</span>
+                        </div>
+
+                        {hasWarnings && (
+                          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginLeft: 38 }}>
+                            {p.warnings.map((w, wi) => (
+                              <div key={wi} title={w.desc} style={{
+                                display: 'flex', alignItems: 'center', gap: 4,
+                                padding: '3px 10px', borderRadius: 6,
+                                background: 'rgba(217,119,6,0.1)', color: '#92400e',
+                                fontSize: '0.75rem', fontWeight: 500, cursor: 'help',
+                              }}>
+                                <span>{w.icon}</span> {w.label}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div style={{ display: 'flex', gap: 12 }}>
+                  <button className="btn btn-ghost btn-lg" onClick={() => { setStep(0); setQuiz(null); }}><ArrowLeft size={18} /> Voltar</button>
+                  <button className="btn btn-primary btn-lg" style={{ flex: 1 }} onClick={async () => {
+                    setClonePhase('✅ Publicando...');
+                    setCloning(true);
+                    try {
+                      const saved = await saveQuiz(quiz);
+                      try { await consumeQuota('clone'); } catch (e) { /* don't block */ }
+                      setPublished(saved);
+                      setStep(2);
+                    } catch (err) { setGenError(err.message); }
+                    finally { setCloning(false); }
+                  }} disabled={cloning}>
+                    {cloning ? <><Loader2 size={16} className="spin" /> Publicando...</> : <>🚀 Publicar Quiz</>}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* ── Step 1 (AI): Configure ── */}
+            {step === 1 && quiz && creationMode !== 'clone' && (
               <div className="animate-in">
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 24 }}>
                   <div>

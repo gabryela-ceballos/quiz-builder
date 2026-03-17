@@ -422,6 +422,77 @@ function BlockRenderer({ block, pc }) {
         case 'scroll-picker': {
             const val = block.defaultValue || 170;
             const unit = block.unit || 'cm';
+            const style = block.visualStyle || 'drum';
+
+            if (style === 'ruler') {
+                // Horizontal ruler with tick marks
+                const ticks = [];
+                for (let i = val - 15; i <= val + 15; i++) ticks.push(i);
+                return (
+                    <div style={{ textAlign: 'center' }}>
+                        <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 12, color: '#1a2332' }}>{block.text}</h3>
+                        <div style={{ fontSize: 36, fontWeight: 800, color: '#1a2332', marginBottom: 4 }}>{val}<span style={{ fontSize: 18, fontWeight: 600, color: '#9ca3af' }}>{unit}</span></div>
+                        <div style={{ position: 'relative', height: 80, overflow: 'hidden', margin: '0 -10px' }}>
+                            <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'center', height: 50, gap: 0 }}>
+                                {ticks.map(t => {
+                                    const isMajor = t % 10 === 0;
+                                    const isMid = t % 5 === 0;
+                                    const isCurrent = t === val;
+                                    return (
+                                        <div key={t} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: isMajor ? 8 : 5 }}>
+                                            <div style={{ width: isCurrent ? 3 : 1.5, height: isMajor ? 32 : isMid ? 22 : 14, background: isCurrent ? '#1a2332' : '#d1d5db', borderRadius: 1 }} />
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'center', gap: 0, marginTop: 4 }}>
+                                {ticks.filter(t => t % 10 === 0).map(t => (
+                                    <div key={t} style={{ width: 50, textAlign: 'center', fontSize: 11, color: t === val ? '#1a2332' : '#9ca3af', fontWeight: t === val ? 700 : 400 }}>{t}</div>
+                                ))}
+                            </div>
+                            {/* Indicator arrow */}
+                            <div style={{ position: 'absolute', bottom: 18, left: '50%', transform: 'translateX(-50%)', fontSize: 12, color: '#1a2332' }}>▲</div>
+                        </div>
+                        <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 2 }}>Arraste para ajustar</div>
+                    </div>
+                );
+            }
+
+            if (style === 'slider') {
+                const min = block.min || 140, max = block.max || 210;
+                const pct = ((val - min) / (max - min)) * 100;
+                return (
+                    <div style={{ textAlign: 'center' }}>
+                        <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 12, color: '#1a2332' }}>{block.text}</h3>
+                        <div style={{ fontSize: 36, fontWeight: 800, color: pc, marginBottom: 16 }}>{val} <span style={{ fontSize: 16, fontWeight: 600, color: '#9ca3af' }}>{unit}</span></div>
+                        <div style={{ position: 'relative', height: 8, background: '#e5e7eb', borderRadius: 4, margin: '0 8px' }}>
+                            <div style={{ height: '100%', width: `${pct}%`, background: pc, borderRadius: 4 }} />
+                            <div style={{ position: 'absolute', top: '50%', left: `${pct}%`, transform: 'translate(-50%, -50%)', width: 24, height: 24, borderRadius: '50%', background: '#fff', border: `3px solid ${pc}`, boxShadow: '0 2px 8px rgba(0,0,0,0.15)' }} />
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8, fontSize: 11, color: '#9ca3af' }}>
+                            <span>{min} {unit}</span><span>{max} {unit}</span>
+                        </div>
+                    </div>
+                );
+            }
+
+            if (style === 'input') {
+                return (
+                    <div style={{ textAlign: 'center' }}>
+                        <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 16, color: '#1a2332' }}>{block.text}</h3>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 16 }}>
+                            <div style={{ width: 44, height: 44, borderRadius: 12, background: '#f1f5f9', border: '2px solid #e2e8f0', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22, fontWeight: 700, color: '#9ca3af', cursor: 'pointer' }}>−</div>
+                            <div style={{ minWidth: 100, textAlign: 'center' }}>
+                                <div style={{ fontSize: 40, fontWeight: 800, color: '#1a2332', lineHeight: 1 }}>{val}</div>
+                                <div style={{ fontSize: 14, fontWeight: 600, color: '#9ca3af', marginTop: 2 }}>{unit}</div>
+                            </div>
+                            <div style={{ width: 44, height: 44, borderRadius: 12, background: pc, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22, fontWeight: 700, color: '#fff', cursor: 'pointer' }}>+</div>
+                        </div>
+                    </div>
+                );
+            }
+
+            // Default: drum (vertical roulette)
             return (
                 <div style={{ textAlign: 'center' }}>
                     <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 12, color: '#1a2332' }}>{block.text}</h3>
@@ -514,6 +585,75 @@ function BlockRenderer({ block, pc }) {
         case 'weight-picker': {
             const val = block.defaultValue || 70;
             const unit = block.unit || 'kg';
+            const style = block.visualStyle || 'drum';
+
+            if (style === 'ruler') {
+                const ticks = [];
+                for (let i = val - 15; i <= val + 15; i++) ticks.push(i);
+                return (
+                    <div style={{ textAlign: 'center' }}>
+                        <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 12, color: '#1a2332' }}>{block.text || 'Qual é o seu peso?'}</h3>
+                        <div style={{ fontSize: 36, fontWeight: 800, color: '#1a2332', marginBottom: 4 }}>{val}<span style={{ fontSize: 18, fontWeight: 600, color: '#9ca3af' }}>{unit}</span></div>
+                        <div style={{ position: 'relative', height: 80, overflow: 'hidden', margin: '0 -10px' }}>
+                            <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'center', height: 50, gap: 0 }}>
+                                {ticks.map(t => {
+                                    const isMajor = t % 10 === 0;
+                                    const isMid = t % 5 === 0;
+                                    const isCurrent = t === val;
+                                    return (
+                                        <div key={t} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: isMajor ? 8 : 5 }}>
+                                            <div style={{ width: isCurrent ? 3 : 1.5, height: isMajor ? 32 : isMid ? 22 : 14, background: isCurrent ? '#1a2332' : '#d1d5db', borderRadius: 1 }} />
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'center', gap: 0, marginTop: 4 }}>
+                                {ticks.filter(t => t % 10 === 0).map(t => (
+                                    <div key={t} style={{ width: 50, textAlign: 'center', fontSize: 11, color: t === val ? '#1a2332' : '#9ca3af', fontWeight: t === val ? 700 : 400 }}>{t}</div>
+                                ))}
+                            </div>
+                            <div style={{ position: 'absolute', bottom: 18, left: '50%', transform: 'translateX(-50%)', fontSize: 12, color: '#1a2332' }}>▲</div>
+                        </div>
+                        <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 2 }}>Arraste para ajustar</div>
+                    </div>
+                );
+            }
+
+            if (style === 'slider') {
+                const min = block.min || 30, max = block.max || 200;
+                const pct = ((val - min) / (max - min)) * 100;
+                return (
+                    <div style={{ textAlign: 'center' }}>
+                        <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 12, color: '#1a2332' }}>{block.text || 'Qual é o seu peso?'}</h3>
+                        <div style={{ fontSize: 36, fontWeight: 800, color: pc, marginBottom: 16 }}>{val} <span style={{ fontSize: 16, fontWeight: 600, color: '#9ca3af' }}>{unit}</span></div>
+                        <div style={{ position: 'relative', height: 8, background: '#e5e7eb', borderRadius: 4, margin: '0 8px' }}>
+                            <div style={{ height: '100%', width: `${pct}%`, background: pc, borderRadius: 4 }} />
+                            <div style={{ position: 'absolute', top: '50%', left: `${pct}%`, transform: 'translate(-50%, -50%)', width: 24, height: 24, borderRadius: '50%', background: '#fff', border: `3px solid ${pc}`, boxShadow: '0 2px 8px rgba(0,0,0,0.15)' }} />
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8, fontSize: 11, color: '#9ca3af' }}>
+                            <span>{min} {unit}</span><span>{max} {unit}</span>
+                        </div>
+                    </div>
+                );
+            }
+
+            if (style === 'input') {
+                return (
+                    <div style={{ textAlign: 'center' }}>
+                        <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 16, color: '#1a2332' }}>{block.text || 'Qual é o seu peso?'}</h3>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 16 }}>
+                            <div style={{ width: 44, height: 44, borderRadius: 12, background: '#f1f5f9', border: '2px solid #e2e8f0', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22, fontWeight: 700, color: '#9ca3af' }}>−</div>
+                            <div style={{ minWidth: 100, textAlign: 'center' }}>
+                                <div style={{ fontSize: 40, fontWeight: 800, color: '#1a2332', lineHeight: 1 }}>{val}</div>
+                                <div style={{ fontSize: 14, fontWeight: 600, color: '#9ca3af', marginTop: 2 }}>{unit}</div>
+                            </div>
+                            <div style={{ width: 44, height: 44, borderRadius: 12, background: pc, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22, fontWeight: 700, color: '#fff' }}>+</div>
+                        </div>
+                    </div>
+                );
+            }
+
+            // Default: drum
             return (<div style={{ textAlign: 'center' }}>
                 <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 12, color: '#1a2332' }}>{block.text || 'Qual é o seu peso?'}</h3>
                 <div style={{ position: 'relative', height: 160, overflow: 'hidden', borderRadius: 16, background: 'linear-gradient(to bottom, rgba(0,0,0,0.06), transparent 30%, transparent 70%, rgba(0,0,0,0.06))' }}>
@@ -647,9 +787,27 @@ function BlockRenderer({ block, pc }) {
             )}
         </div>);
 
-        case 'html-script': return (<div style={{ padding: '12px 14px', background: '#1e1e2e', borderRadius: 12, fontFamily: 'monospace', fontSize: 12, color: '#a6e3a1', lineHeight: 1.6, overflow: 'hidden', maxHeight: 100 }}>
-            {block.code ? <pre style={{ margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{block.code.slice(0, 200)}</pre> : <span style={{ color: '#6c7086' }}>{'<html/> código personalizado'}</span>}
-        </div>);
+        case 'html-script': return (
+            <div style={{ borderRadius: 12, overflow: 'hidden', border: '1px solid #e2e8f0', position: 'relative' }}>
+                {block.code ? (
+                    <iframe
+                        srcDoc={block.code}
+                        title="Preview"
+                        sandbox="allow-same-origin"
+                        style={{ width: '100%', height: 320, border: 'none', pointerEvents: 'none', borderRadius: 12, background: '#fff' }}
+                        scrolling="no"
+                    />
+                ) : (
+                    <div style={{ width: '100%', height: 120, background: '#f7fafc', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#a0aec0', fontSize: 14, flexDirection: 'column', gap: 6 }}>
+                        <span style={{ fontSize: 28 }}>🌐</span>
+                        <span>Página clonada</span>
+                    </div>
+                )}
+                <div style={{ position: 'absolute', bottom: 6, right: 6, background: 'rgba(0,0,0,0.5)', color: '#fff', padding: '2px 8px', borderRadius: 8, fontSize: 10, fontWeight: 600 }}>
+                    🔗 Clonado
+                </div>
+            </div>
+        );
 
         default: return <div style={{ color: '#888', fontSize: 14 }}>Bloco: {block.type}</div>;
     }
