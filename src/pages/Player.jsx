@@ -1709,6 +1709,7 @@ export default function Player() {
   const { id } = useParams();
   const navigate = useNavigate();
   const [quiz, setQuiz] = useState(null);
+  const [notFound, setNotFound] = useState(false);
   const [screen, setScreen] = useState('welcome');
   const [pageIndex, setPageIndex] = useState(0);
   const [answers, setAnswers] = useState({});
@@ -1717,10 +1718,18 @@ export default function Player() {
   const [result, setResult] = useState(null);
   const [optionAnim, setOptionAnim] = useState(null);
 
-  useEffect(() => { getQuiz(id).then(q => { if (!q) navigate('/dashboard'); else { setQuiz(q); recordEvent(q.id, 'view'); const hasClone = q.pages?.some(p => p.type === 'html-script'); if (hasClone) { setScreen('playing'); recordEvent(q.id, 'start'); } } }); }, [id]);
+  useEffect(() => { getQuiz(id).then(q => { if (!q) setNotFound(true); else { setQuiz(q); recordEvent(q.id, 'view'); const hasClone = q.pages?.some(p => p.type === 'html-script'); if (hasClone) { setScreen('playing'); recordEvent(q.id, 'start'); } } }); }, [id]);
 
   const T = useMemo(() => quiz ? buildTheme(quiz) : null, [quiz]);
   const ne = useMemo(() => quiz ? getNicheEmojis(quiz.niche) : NE.outro, [quiz]);
+
+  if (notFound) return (
+    <div style={{ background: '#f5f7fa', minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 16, fontFamily: "'Inter', sans-serif" }}>
+      <div style={{ fontSize: 48 }}>😕</div>
+      <h2 style={{ fontSize: 20, fontWeight: 700, color: '#1a2332', margin: 0 }}>Quiz não encontrado</h2>
+      <p style={{ fontSize: 14, color: '#6b7280', margin: 0 }}>Este quiz não existe ou foi removido.</p>
+    </div>
+  );
 
   if (!quiz || !T) return <div style={{ background: '#f5f7fa', minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><Loader2 size={32} className="spin" style={{ color: '#3b6b5e' }} /></div>;
 
