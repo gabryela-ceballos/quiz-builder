@@ -1,6 +1,7 @@
 const express = require('express');
 const Database = require('better-sqlite3');
 const cors = require('cors');
+const compression = require('compression');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
@@ -118,11 +119,15 @@ function getOrCreateSub(userId) {
 
 
 // ── Server hostname (for CNAME instructions) ──
-const SERVER_HOSTNAME = process.env.SERVER_HOSTNAME || 'localhost:3001';
+// Priority: explicit SERVER_HOSTNAME > Railway public domain > localhost fallback
+const SERVER_HOSTNAME = process.env.SERVER_HOSTNAME
+    || process.env.RAILWAY_PUBLIC_DOMAIN
+    || `localhost:${PORT}`;
 const ADMIN_EMAIL = (process.env.ADMIN_EMAIL || 'admin@test.com').toLowerCase().trim();
 
 // ── Middleware ──
 app.use(cors());
+app.use(compression());
 app.use(express.json({ limit: '50mb' }));
 
 // ── Simple token helpers ──
@@ -675,23 +680,26 @@ app.post('/api/clone-screenshots', upload.array('screenshots', 30), async (req, 
     console.log(`[CloneScreenshots] Processing ${files.length} screenshots...`);
 
     try {
-        const pages = [];
-        for (let i = 0; i < files.length; i++) {
-            console.log(`[CloneScreenshots] Analyzing image ${i + 1}/${files.length}: ${files[i].originalname}`);
+        // Process screenshots in parallel batches of 5 for speed
+        const BATCH_SIZE = 5;
+        const allResults = new Array(files.length);
 
+        async function processImage(i) {
+            console.log(`[CloneScreenshots] Analyzing image ${i + 1}/${files.length}: ${files[i].originalname}`);
             const imageBuffer = fs.readFileSync(files[i].path);
             const base64 = imageBuffer.toString('base64');
             const mimeType = files[i].mimetype || 'image/png';
 
-            const visionRes = await fetch(OPENAI_URL, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${OPENAI_KEY}` },
-                body: JSON.stringify({
-                    model: 'gpt-4o',
-                    messages: [
-                        {
-                            role: 'system',
-                            content: `Você é um especialista em análise de quizzes/funnels de marketing. Analise o screenshot de uma etapa de quiz e extraia a estrutura em JSON.
+            try {
+                const visionRes = await fetch(OPENAI_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${OPENAI_KEY}` },
+                    body: JSON.stringify({
+                        model: 'gpt-4o',
+                        messages: [
+                            {
+                                role: 'system',
+                                content: `Você é um especialista em análise de quizzes/funnels de marketing. Analise o screenshot de uma etapa de quiz e extraia a estrutura em JSON.
 
 Retorne SEMPRE um JSON com esta estrutura:
 {
@@ -714,45 +722,55 @@ Regras:
 - Extraia o texto EXATO das opções como aparecem na tela
 - Inclua emojis se visíveis nas opções
 - Se não há opções, retorne array vazio []`
-                        },
-                        {
-                            role: 'user',
-                            content: [
-                                { type: 'text', text: `Analise este screenshot (etapa ${i + 1} de ${files.length} do quiz) e extraia a estrutura:` },
-                                { type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64}`, detail: 'high' } }
-                            ]
-                        }
-                    ],
-                    temperature: 0.3,
-                    max_tokens: 1000,
-                    response_format: { type: 'json_object' }
-                }),
-            });
+                            },
+                            {
+                                role: 'user',
+                                content: [
+                                    { type: 'text', text: `Analise este screenshot (etapa ${i + 1} de ${files.length} do quiz) e extraia a estrutura:` },
+                                    { type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64}`, detail: 'high' } }
+                                ]
+                            }
+                        ],
+                        temperature: 0.3,
+                        max_tokens: 1000,
+                        response_format: { type: 'json_object' }
+                    }),
+                });
 
-            if (!visionRes.ok) {
-                const err = await visionRes.json().catch(() => ({}));
-                console.error(`[CloneScreenshots] Vision error for image ${i + 1}:`, err);
-                pages.push({ type: 'insight', text: `(Erro ao analisar screenshot ${i + 1})`, options: [], _error: true });
-                continue;
-            }
+                if (!visionRes.ok) {
+                    const err = await visionRes.json().catch(() => ({}));
+                    console.error(`[CloneScreenshots] Vision error for image ${i + 1}:`, err);
+                    return { type: 'insight', text: `(Erro ao analisar screenshot ${i + 1})`, options: [], _error: true };
+                }
 
-            const visionData = await visionRes.json();
-            const content = visionData.choices?.[0]?.message?.content || '';
-            try {
+                const visionData = await visionRes.json();
+                const content = visionData.choices?.[0]?.message?.content || '';
                 let cleaned = content.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
                 const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
                 if (jsonMatch) cleaned = jsonMatch[0];
                 const page = JSON.parse(cleaned);
-                pages.push(page);
                 console.log(`[CloneScreenshots] ✅ Image ${i + 1}: type=${page.type}, text="${(page.text || '').slice(0, 40)}..."`);
+                return page;
             } catch (e) {
-                console.error(`[CloneScreenshots] Parse error for image ${i + 1}:`, content.slice(0, 200));
-                pages.push({ type: 'insight', text: `(Erro ao processar screenshot ${i + 1})`, options: [], _error: true });
+                console.error(`[CloneScreenshots] Error for image ${i + 1}:`, e.message);
+                return { type: 'insight', text: `(Erro ao processar screenshot ${i + 1})`, options: [], _error: true };
+            } finally {
+                try { fs.unlinkSync(files[i].path); } catch { }
             }
-
-            // Clean up temp file
-            try { fs.unlinkSync(files[i].path); } catch { }
         }
+
+        // Process in parallel batches
+        for (let batch = 0; batch < files.length; batch += BATCH_SIZE) {
+            const batchIndices = [];
+            for (let i = batch; i < Math.min(batch + BATCH_SIZE, files.length); i++) {
+                batchIndices.push(i);
+            }
+            console.log(`[CloneScreenshots] Processing batch ${Math.floor(batch / BATCH_SIZE) + 1} (${batchIndices.length} images)...`);
+            const batchResults = await Promise.all(batchIndices.map(i => processImage(i)));
+            batchIndices.forEach((idx, j) => { allResults[idx] = batchResults[j]; });
+        }
+
+        const pages = allResults;
 
         console.log(`[CloneScreenshots] Done! ${pages.length} pages extracted`);
         res.json({ pages, total: pages.length });
@@ -1199,7 +1217,7 @@ app.get('/api/clone-stream', async (req, res) => {
         send('progress', { stage: 'scraping', msg: '🔍 Abrindo quiz no navegador...', pct: 10 });
 
         await pg.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
-        await delay(3000);
+        await delay(1500);
 
         // Dismiss popups
         await pg.evaluate(() => {
@@ -1209,7 +1227,7 @@ app.get('/api/clone-stream', async (req, res) => {
                 if (t.length < 30 && p.test(t)) { const r = el.getBoundingClientRect(); if (r.height > 0 && r.width > 0) el.click(); }
             });
         });
-        await delay(1000);
+        await delay(500);
 
         send('progress', { stage: 'scraping', msg: '🔍 Quiz carregado. Extraindo páginas...', pct: 15 });
 
@@ -1530,7 +1548,7 @@ app.get('/api/clone-stream', async (req, res) => {
                 // Check mutation flag first (fastest signal)
                 let mutated = await pg.evaluate(() => window.__cloneMutated);
                 if (mutated) {
-                    await delay(1500); // Let SPA transition complete
+                    await delay(700); // Let SPA transition complete
                     const newHash = await getContentHash();
                     if (newHash !== prevHash) return true;
                 }
@@ -1555,14 +1573,14 @@ app.get('/api/clone-stream', async (req, res) => {
                     target.dispatchEvent(new MouseEvent('click', opts));
                 }, { x: clickable.x, y: clickable.y });
                 
-                await delay(2000);
+                await delay(800);
                 
                 // Check both mutation flag and content hash
                 mutated = await pg.evaluate(() => window.__cloneMutated);
                 const newHash = await getContentHash();
                 if (newHash !== prevHash || mutated) {
                     // Extra wait for transition to fully complete
-                    if (mutated && newHash === prevHash) await delay(1500);
+                    if (mutated && newHash === prevHash) await delay(600);
                     const finalHash = await getContentHash();
                     if (finalHash !== prevHash) return true;
                 }
@@ -1592,7 +1610,7 @@ app.get('/api/clone-stream', async (req, res) => {
                         }
                         target.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, clientX: x, clientY: y, view: window }));
                     }, { x: clickable.x, y: clickable.y });
-                    await delay(800);
+                    await delay(400);
                     return true;
                 } catch { return false; }
             }
