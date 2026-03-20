@@ -1234,7 +1234,7 @@ app.get('/api/clone-stream', async (req, res) => {
         send('progress', { stage: 'scraping', msg: '🔍 Abrindo quiz no navegador...', pct: 10 });
 
         await pg.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
-        await delay(1500);
+        await delay(3000);
 
         // Dismiss popups
         await pg.evaluate(() => {
@@ -1244,7 +1244,7 @@ app.get('/api/clone-stream', async (req, res) => {
                 if (t.length < 30 && p.test(t)) { const r = el.getBoundingClientRect(); if (r.height > 0 && r.width > 0) el.click(); }
             });
         });
-        await delay(500);
+        await delay(1000);
 
         send('progress', { stage: 'scraping', msg: '🔍 Quiz carregado. Extraindo páginas...', pct: 15 });
 
@@ -1565,7 +1565,7 @@ app.get('/api/clone-stream', async (req, res) => {
                 // Check mutation flag first (fastest signal)
                 let mutated = await pg.evaluate(() => window.__cloneMutated);
                 if (mutated) {
-                    await delay(700); // Let SPA transition complete
+                    await delay(1500); // Let SPA transition complete
                     const newHash = await getContentHash();
                     if (newHash !== prevHash) return true;
                 }
@@ -1597,7 +1597,7 @@ app.get('/api/clone-stream', async (req, res) => {
                 const newHash = await getContentHash();
                 if (newHash !== prevHash || mutated) {
                     // Extra wait for transition to fully complete
-                    if (mutated && newHash === prevHash) await delay(600);
+                    if (mutated && newHash === prevHash) await delay(1500);
                     const finalHash = await getContentHash();
                     if (finalHash !== prevHash) return true;
                 }
@@ -1627,7 +1627,7 @@ app.get('/api/clone-stream', async (req, res) => {
                         }
                         target.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, clientX: x, clientY: y, view: window }));
                     }, { x: clickable.x, y: clickable.y });
-                    await delay(400);
+                    await delay(800);
                     return true;
                 } catch { return false; }
             }
