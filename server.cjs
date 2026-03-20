@@ -127,7 +127,13 @@ const ADMIN_EMAIL = (process.env.ADMIN_EMAIL || 'admin@test.com').toLowerCase().
 
 // ── Middleware ──
 app.use(cors());
-app.use(compression());
+app.use(compression({
+    filter: (req, res) => {
+        // Don't compress SSE streams — compression buffers them and breaks real-time delivery
+        if (req.headers.accept === 'text/event-stream' || req.path === '/api/clone-stream') return false;
+        return compression.filter(req, res);
+    }
+}));
 app.use(express.json({ limit: '50mb' }));
 
 // ── Simple token helpers ──
