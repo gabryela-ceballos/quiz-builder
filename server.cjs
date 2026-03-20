@@ -1207,7 +1207,9 @@ app.get('/api/clone-stream', async (req, res) => {
     const cloneSessionId = 'clone_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 
     const send = (type, data) => {
-        res.write(`data: ${JSON.stringify({ type, ...data })}\n\n`);
+        try {
+            if (!res.writableEnded) res.write(`data: ${JSON.stringify({ type, ...data })}\n\n`);
+        } catch (e) { /* connection already closed */ }
     };
 
     // Keep connection alive with periodic pings every 15 seconds
