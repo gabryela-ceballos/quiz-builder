@@ -3139,6 +3139,39 @@ IMPORTANT RULES:
             }
         });
 
+        // ═══ SEND EARLY PARTIAL RESULT — so frontend has data even if connection drops ═══
+        const earlyResult = {
+            cloneSessionId,
+            quizName: welcomeData?.headline || 'Quiz Clonado',
+            niche: 'outro',
+            primaryColor: rgb2hex(quizTheme.ctaColor) || rgb2hex(quizTheme.themeColor) || '#2563eb',
+            bgColor: rgb2hex(quizTheme.bgColor) || '#ffffff',
+            titleColor: rgb2hex(quizTheme.titleColor) || '',
+            contentFont: (quizTheme.contentFont || '').split(',')[0].replace(/["']/g, '').trim() || '',
+            borderRadius: quizTheme.rounded || '',
+            welcome: {
+                headline: welcomeData?.headline || 'Quiz Clonado',
+                subheadline: welcomeData?.subheadline || '',
+                cta: welcomeData?.cta || 'Começar →',
+                logoUrl: welcomeData?.logoUrl || '',
+                heroImageUrl: welcomeData?.heroImageUrl || '',
+            },
+            pages: allPages,
+            clonedCSS: {
+                cssText: cachedCSS.cssText,
+                cssVars: cachedCSS.cssVars,
+                bodyBg: cachedCSS.bodyBg,
+                bodyColor: cachedCSS.bodyColor,
+                bodyFont: cachedCSS.bodyFont,
+            },
+            results: [
+                { id: 'r1', name: 'Resultado A', description: 'Seu perfil indica...', cta: 'Ver recomendação →', minPct: 0, maxPct: 50 },
+                { id: 'r2', name: 'Resultado B', description: 'Seu perfil indica...', cta: 'Ver recomendação →', minPct: 51, maxPct: 100 },
+            ],
+            collectLead,
+        };
+        send('progress', { stage: 'building', msg: `🧱 Montando quiz com ${allPages.length} páginas...`, pct: 92, partialQuiz: earlyResult });
+
         // ═══ TRANSLATE PAGES IF LANGUAGE SELECTED ═══
         console.log(`[Clone-Stream] Translation check: targetLang="${targetLang}", OPENAI_KEY=${OPENAI_KEY ? 'SET' : 'NOT SET'}, pages=${allPages.length}`);
         if (targetLang && OPENAI_KEY) {

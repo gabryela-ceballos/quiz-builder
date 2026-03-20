@@ -77,6 +77,8 @@ export async function cloneAndOptimize(url, niche, mode, productDescription, onP
         if (cloneLang && cloneLang !== 'original') params.set('lang', cloneLang);
         const evtSource = new EventSource(`${API_BASE}/api/clone-stream?${params}`);
         let quizData = null;
+        let partialQuiz = null; // Track partial data from progress events
+        let clonedPageCount = 0;
 
         evtSource.onmessage = (event) => {
             try {
@@ -84,6 +86,9 @@ export async function cloneAndOptimize(url, niche, mode, productDescription, onP
 
                 if (data.type === 'progress') {
                     if (onProgress) onProgress(data.stage, data.msg, data);
+                    // Track partial quiz data as it arrives
+                    if (data.partialQuiz) partialQuiz = data.partialQuiz;
+                    if (data.stage === 'page_done') clonedPageCount++;
                 }
                 else if (data.type === 'result') {
                     quizData = data.quiz;
@@ -98,6 +103,8 @@ export async function cloneAndOptimize(url, niche, mode, productDescription, onP
                     evtSource.close();
                     if (quizData) {
                         resolve(buildPlayerQuiz(quizData));
+                    } else if (partialQuiz) {
+                        resolve(buildPlayerQuiz(partialQuiz));
                     } else {
                         reject(new Error('Nenhum dado recebido do servidor'));
                     }
@@ -109,9 +116,12 @@ export async function cloneAndOptimize(url, niche, mode, productDescription, onP
 
         evtSource.onerror = (err) => {
             evtSource.close();
-            // If we got quiz data before error, still resolve
+            // Use whatever data we have: full result > partial quiz
             if (quizData) {
                 resolve(buildPlayerQuiz(quizData));
+            } else if (partialQuiz) {
+                console.warn('[Clone] Connection lost but using partial data');
+                resolve(buildPlayerQuiz(partialQuiz));
             } else {
                 reject(new Error('Conexão perdida com o servidor. Tente novamente.'));
             }
