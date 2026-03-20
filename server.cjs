@@ -1205,9 +1205,11 @@ app.get('/api/clone-stream', async (req, res) => {
         send('progress', { stage: 'connecting', msg: '🌐 Conectando ao servidor...', pct: 5 });
 
         const puppeteer = require('puppeteer');
+        const execPath = process.env.PUPPETEER_EXECUTABLE_PATH || null;
         browser = await puppeteer.launch({
             headless: 'new',
-            args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-web-security'],
+            ...(execPath ? { executablePath: execPath } : {}),
+            args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-web-security', '--disable-gpu'],
         });
         const pg = await browser.newPage();
         const delay = ms => new Promise(r => setTimeout(r, ms));
