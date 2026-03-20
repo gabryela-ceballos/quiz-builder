@@ -1,5 +1,5 @@
 // cloneService.js — Clone + Optimize quiz from URL
-// Uses SSE (Server-Sent Events) for real-time progress
+// Uses Job-based polling (survives standby, disconnect, browser refresh)
 
 const API_BASE = import.meta.env.DEV ? 'http://localhost:3001' : '';
 
@@ -68,69 +68,77 @@ function buildPlayerQuiz(extracted) {
     };
 }
 
-// ═══ Clone via SSE stream (real-time progress) ═══
+// ═══ Clone via Job-based polling (survives standby/disconnect) ═══
 export async function cloneAndOptimize(url, niche, mode, productDescription, onProgress, cloneLang) {
     if (!url?.trim()) throw new Error('URL inválida');
 
+    // 1. Start the clone job on the server
+    const startRes = await fetch(`${API_BASE}/api/clone-start`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: url.trim(), lang: (cloneLang && cloneLang !== 'original') ? cloneLang : null }),
+    });
+
+    if (!startRes.ok) {
+        const err = await startRes.json().catch(() => ({ error: 'Erro ao iniciar clone' }));
+        throw new Error(err.error || 'Erro ao iniciar clone');
+    }
+
+    const { jobId } = await startRes.json();
+    let lastSeen = 0;
+
+    // 2. Poll for status every 2 seconds until done
     return new Promise((resolve, reject) => {
-        const params = new URLSearchParams({ url: url.trim() });
-        if (cloneLang && cloneLang !== 'original') params.set('lang', cloneLang);
-        const evtSource = new EventSource(`${API_BASE}/api/clone-stream?${params}`);
-        let quizData = null;
-        let partialQuiz = null; // Track partial data from progress events
-        let clonedPageCount = 0;
-
-        evtSource.onmessage = (event) => {
+        const poll = async () => {
             try {
-                const data = JSON.parse(event.data);
+                const statusRes = await fetch(`${API_BASE}/api/clone-status/${jobId}?lastSeen=${lastSeen}`);
 
-                if (data.type === 'progress') {
-                    // Skip heartbeat events (keepalive, don't show in UI)
-                    if (data.stage !== 'heartbeat' && onProgress) onProgress(data.stage, data.msg, data);
-                    // Track partial quiz data as it arrives
-                    if (data.partialQuiz) partialQuiz = data.partialQuiz;
-                    if (data.stage === 'page_done') clonedPageCount++;
-                }
-                else if (data.type === 'result') {
-                    quizData = data.quiz;
-                }
-                else if (data.type === 'error') {
-                    evtSource.close();
-                    reject(new Error(data.error || 'Erro ao clonar'));
+                if (!statusRes.ok) {
+                    // Retry on network errors (e.g., waking from standby)
+                    setTimeout(poll, 3000);
+                    return;
                 }
 
-                // Complete = close and resolve
-                if (data.stage === 'complete') {
-                    evtSource.close();
-                    if (quizData) {
-                        resolve(buildPlayerQuiz(quizData));
-                    } else if (partialQuiz) {
-                        resolve(buildPlayerQuiz(partialQuiz));
-                    } else {
-                        reject(new Error('Nenhum dado recebido do servidor'));
+                const data = await statusRes.json();
+
+                // Show new progress messages
+                if (data.progress && data.progress.length > 0) {
+                    for (const p of data.progress) {
+                        if (p.stage !== 'heartbeat' && onProgress) {
+                            onProgress(p.stage, p.msg, p);
+                        }
                     }
                 }
-            } catch (e) {
-                console.error('SSE parse error:', e);
+                lastSeen = data.progressCount;
+
+                // Check if done
+                if (data.status === 'done' && data.result) {
+                    resolve(buildPlayerQuiz(data.result));
+                    return;
+                }
+
+                // Check if error
+                if (data.status === 'error') {
+                    reject(new Error(data.error || 'Erro ao clonar'));
+                    return;
+                }
+
+                // Still running, poll again
+                setTimeout(poll, 2000);
+
+            } catch (err) {
+                // Network error (standby, disconnect, etc.) — just retry
+                console.warn('[Clone] Poll error, retrying...', err.message);
+                setTimeout(poll, 3000);
             }
         };
 
-        evtSource.onerror = (err) => {
-            evtSource.close();
-            // Use whatever data we have: full result > partial quiz
-            if (quizData) {
-                resolve(buildPlayerQuiz(quizData));
-            } else if (partialQuiz) {
-                console.warn('[Clone] Connection lost but using partial data');
-                resolve(buildPlayerQuiz(partialQuiz));
-            } else {
-                reject(new Error('Conexão perdida com o servidor. Tente novamente.'));
-            }
-        };
+        // Start polling
+        poll();
     });
 }
 
-// ═══ Clone from URL (legacy, non-SSE) ═══
+// ═══ Clone from URL (shortcut) ═══
 export async function cloneFromUrl(url, onProgress) {
     return cloneAndOptimize(url, 'outro', 'clone_only', '', onProgress);
 }

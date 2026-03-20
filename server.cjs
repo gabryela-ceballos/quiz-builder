@@ -1185,7 +1185,237 @@ Você DEVE criar quizzes que sigam uma jornada lógica e narrativa:
     }
 });
 
-// ── Quiz Clone SSE (real-time progress) ──
+// ═══ JOB-BASED CLONE SYSTEM (survives standby/disconnect) ═══
+const cloneJobs = new Map();
+
+// Clean up old jobs every 10 minutes
+setInterval(() => {
+    const now = Date.now();
+    for (const [id, job] of cloneJobs) {
+        if (now - job.startedAt > 30 * 60 * 1000) cloneJobs.delete(id); // 30 min expiry
+    }
+}, 10 * 60 * 1000);
+
+// Start a clone job
+app.post('/api/clone-start', (req, res) => {
+    const { url, lang } = req.body;
+    if (!url) return res.status(400).json({ error: 'URL obrigatória' });
+
+    const jobId = 'cj_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+    const job = {
+        id: jobId,
+        status: 'running',
+        progress: [],
+        result: null,
+        error: null,
+        startedAt: Date.now(),
+    };
+    cloneJobs.set(jobId, job);
+
+    // Run clone in background (not awaited)
+    runCloneJob(jobId, url, lang || null).catch(err => {
+        const j = cloneJobs.get(jobId);
+        if (j) { j.status = 'error'; j.error = err.message; }
+    });
+
+    res.json({ jobId });
+});
+
+// Poll clone job status
+app.get('/api/clone-status/:jobId', (req, res) => {
+    const job = cloneJobs.get(req.params.jobId);
+    if (!job) return res.status(404).json({ error: 'Job não encontrado' });
+
+    // Return progress since last poll (or all if first poll)
+    const lastSeen = parseInt(req.query.lastSeen || '0');
+    const newProgress = job.progress.filter((_, i) => i >= lastSeen);
+
+    res.json({
+        status: job.status,
+        progress: newProgress,
+        progressCount: job.progress.length,
+        result: job.result,
+        error: job.error,
+    });
+});
+
+// The actual clone logic (runs in background)
+async function runCloneJob(jobId, url, targetLang) {
+    const job = cloneJobs.get(jobId);
+    if (!job) return;
+
+    const addProgress = (stage, msg, pct) => {
+        job.progress.push({ stage, msg, pct, ts: Date.now() });
+    };
+
+    const cloneSessionId = 'clone_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+
+    let browser;
+    try {
+        addProgress('connecting', '🌐 Conectando ao servidor...', 5);
+
+        const puppeteer = require('puppeteer');
+        const execPath = process.env.PUPPETEER_EXECUTABLE_PATH || null;
+        browser = await puppeteer.launch({
+            headless: 'new',
+            ...(execPath ? { executablePath: execPath } : {}),
+            args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-web-security', '--disable-gpu'],
+        });
+        const pg = await browser.newPage();
+        const delay = ms => new Promise(r => setTimeout(r, ms));
+        await pg.setViewport({ width: 430, height: 932 });
+        await pg.setUserAgent('Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1');
+
+        addProgress('scraping', '🔍 Abrindo quiz no navegador...', 10);
+
+        await pg.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
+        await delay(3000);
+
+        // Dismiss popups
+        await pg.evaluate(() => {
+            const p = /accept|aceitar|ok|got it|entendi|fechar|close|dismiss|consent/i;
+            document.querySelectorAll('button,a,[role="button"]').forEach(el => {
+                const t = (el.innerText || '').trim();
+                if (t.length < 30 && p.test(t)) { const r = el.getBoundingClientRect(); if (r.height > 0 && r.width > 0) el.click(); }
+            });
+        });
+        await delay(1000);
+
+        addProgress('scraping', '🔍 Quiz carregado. Extraindo páginas...', 15);
+
+        // ── Extract theme CSS variables ──
+        const quizTheme = await pg.evaluate(() => {
+            const root = document.documentElement;
+            const style = getComputedStyle(root);
+            const getVar = name => style.getPropertyValue(name).trim();
+            const themeColor = getVar('--theme-color') || getVar('--primary') || getVar('--accent') || '';
+            const bgColor = getVar('--theme-background-color') || getVar('--bg') || '';
+            const titleColor = getVar('--theme-title-color') || getVar('--title-color') || '';
+            const contentColor = getVar('--theme-content-color') || getVar('--text-color') || '';
+            const contentFont = getVar('--theme-content-font') || getVar('--font-family') || '';
+            const rounded = getVar('--theme-rounded') || '';
+            const elSize = getVar('--theme-element-size') || '';
+            let ctaColor = '';
+            const ctaBtns = document.querySelectorAll('button, [role="button"], .btn, a.btn');
+            for (const btn of ctaBtns) {
+                const s = getComputedStyle(btn);
+                const bg = s.backgroundColor;
+                if (bg && bg !== 'rgba(0, 0, 0, 0)' && bg !== 'transparent' && bg !== 'rgb(255, 255, 255)') {
+                    ctaColor = bg; break;
+                }
+            }
+            return { themeColor, bgColor, titleColor, contentColor, contentFont, rounded, elSize, ctaColor };
+        });
+
+        const rgb2hex = (rgb) => {
+            if (!rgb) return '';
+            const m = rgb.match(/\d+/g);
+            if (m && m.length >= 3) return '#' + m.slice(0, 3).map(n => parseInt(n).toString(16).padStart(2, '0')).join('');
+            if (rgb.startsWith('#')) return rgb;
+            return '';
+        };
+
+        // ── Extract CSS once ──
+        const cachedCSS = await pg.evaluate(() => {
+            let cssText = '';
+            try {
+                for (const sheet of document.styleSheets) {
+                    try { for (const rule of sheet.cssRules) { cssText += rule.cssText + '\n'; } } catch {}
+                }
+            } catch {}
+            let cssVars = ':root {\n';
+            for (const s of document.querySelectorAll('style')) {
+                const txt = s.textContent || '';
+                const varMatches = txt.matchAll(/--([\w-]+)\s*:\s*([^;]+)/g);
+                for (const m of varMatches) { cssVars += `  --${m[1]}: ${m[2]};\n`; }
+            }
+            cssVars += '}\n';
+            const bodyBg = getComputedStyle(document.body).backgroundColor;
+            const bodyColor = getComputedStyle(document.body).color;
+            const bodyFont = getComputedStyle(document.body).fontFamily;
+            return { cssText, cssVars, bodyBg, bodyColor, bodyFont };
+        });
+
+        // ── Reuse same scrape logic — call the SSE clone-stream handler internally ──
+        // Instead of duplicating 2000 lines, delegate to a shared function
+        // For now, use the same scraping loop from the SSE handler via the existing endpoint logic
+        // We'll import the page extraction functions by reference
+
+        // ── Actually, instead of duplicating, let's just call the existing /api/clone-stream endpoint on localhost ──
+        // This is the simplest approach that reuses all existing code
+        
+        await browser.close();
+        browser = null;
+
+        // Use internal HTTP call to the SSE endpoint and collect results
+        addProgress('scraping', '🔍 Processando quiz...', 20);
+
+        const internalUrl = `http://localhost:${PORT}/api/clone-stream?url=${encodeURIComponent(url)}${targetLang ? '&lang=' + targetLang : ''}`;
+        
+        const result = await new Promise((resolve, reject) => {
+            const http = require('http');
+            let buffer = '';
+            let quizData = null;
+            let lastProgressStage = '';
+
+            const reqInternal = http.get(internalUrl, (resp) => {
+                resp.on('data', (chunk) => {
+                    buffer += chunk.toString();
+                    // Parse SSE events from buffer
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop() || ''; // Keep incomplete line
+                    
+                    for (const line of lines) {
+                        if (!line.startsWith('data: ')) continue;
+                        try {
+                            const data = JSON.parse(line.slice(6));
+                            if (data.type === 'progress' && data.stage !== 'heartbeat') {
+                                if (data.stage !== lastProgressStage || data.msg !== job.progress[job.progress.length - 1]?.msg) {
+                                    addProgress(data.stage, data.msg, data.pct);
+                                    lastProgressStage = data.stage;
+                                }
+                            }
+                            if (data.type === 'result') {
+                                quizData = data.quiz;
+                            }
+                            if (data.type === 'error') {
+                                reject(new Error(data.error));
+                            }
+                        } catch {}
+                    }
+                });
+
+                resp.on('end', () => {
+                    if (quizData) resolve(quizData);
+                    else reject(new Error('Nenhum dado recebido'));
+                });
+
+                resp.on('error', reject);
+            });
+
+            reqInternal.on('error', reject);
+            // 10 minute timeout
+            reqInternal.setTimeout(600000, () => {
+                reqInternal.destroy();
+                if (quizData) resolve(quizData);
+                else reject(new Error('Timeout na clonagem'));
+            });
+        });
+
+        job.result = result;
+        job.status = 'done';
+        addProgress('complete', `✅ Quiz clonado com sucesso!`, 100);
+
+    } catch (err) {
+        console.error('[CloneJob] Error:', err.message);
+        if (browser) try { await browser.close(); } catch {}
+        job.error = err.message || 'Erro ao clonar';
+        job.status = 'error';
+        addProgress('error', `❌ ${err.message}`, -1);
+    }
+}
+
+// ── Quiz Clone SSE (real-time progress — kept for backward compatibility) ──
 
 app.get('/api/clone-stream', async (req, res) => {
     const url = req.query.url;
