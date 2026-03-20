@@ -1199,12 +1199,21 @@ app.get('/api/clone-stream', async (req, res) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.flushHeaders();
 
+    // Increase timeout for long-running clone operations (5 minutes)
+    req.setTimeout(300000);
+    res.setTimeout(300000);
+
     // Generate a unique session ID for asset storage
     const cloneSessionId = 'clone_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 
     const send = (type, data) => {
         res.write(`data: ${JSON.stringify({ type, ...data })}\n\n`);
     };
+
+    // Keep connection alive with periodic pings every 15 seconds
+    const keepAlive = setInterval(() => {
+        try { res.write(': keepalive\n\n'); } catch {}
+    }, 15000);
 
     let browser;
     try {
@@ -3271,12 +3280,14 @@ IMPORTANT RULES:
         send('progress', { stage: 'building', msg: `🧱 Montando quiz com ${allPages.length} páginas...`, pct: 98 });
         send('result', { quiz: quizResult });
         send('progress', { stage: 'complete', msg: `✅ ${allPages.length} páginas clonadas com formato visual!`, pct: 100 });
+        clearInterval(keepAlive);
         res.end();
 
     } catch (err) {
         console.error('[Clone-Stream] Error:', err.message);
         if (browser) try { await browser.close(); } catch { }
         send('error', { error: err.message || 'Erro ao clonar' });
+        clearInterval(keepAlive);
         res.end();
     }
 });
