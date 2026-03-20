@@ -3280,7 +3280,7 @@ IMPORTANT RULES:
             if (!advanced) {
                 failedAdvanceCount++;
                 console.log(`[Clone-Stream] ❌ Failed to advance (${failedAdvanceCount} consecutive failures)`);
-                if (failedAdvanceCount >= 2) {
+                if (failedAdvanceCount >= 4) {
                     send('progress', { stage: 'done', msg: `⛔ Não foi possível avançar. ${allPages.length} páginas clonadas.`, pct: 90 });
                     break;
                 }
@@ -3288,7 +3288,7 @@ IMPORTANT RULES:
                 // "Advanced" but no new unique page was collected — likely a false advance
                 failedAdvanceCount++;
                 console.log(`[Clone-Stream] ⚠️ Advanced but no new page collected (${failedAdvanceCount} failures)`);
-                if (failedAdvanceCount >= 3) {
+                if (failedAdvanceCount >= 5) {
                     send('progress', { stage: 'done', msg: `⛔ Quiz não avança mais. ${allPages.length} páginas clonadas.`, pct: 90 });
                     break;
                 }

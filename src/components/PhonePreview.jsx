@@ -787,11 +787,18 @@ function BlockRenderer({ block, pc }) {
             )}
         </div>);
 
-        case 'html-script': return (
+        case 'html-script': {
+            // Use fullCode if available (has full HTML doc), otherwise wrap code in proper document
+            let previewHtml = block.fullCode || block.code || '';
+            if (previewHtml && !previewHtml.includes('<html') && !previewHtml.includes('<!DOCTYPE')) {
+                // Body-only content — wrap in a proper HTML document with viewport meta
+                previewHtml = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>*{box-sizing:border-box}body{margin:0;padding:0;width:100%;overflow-x:hidden}</style></head><body>${previewHtml}</body></html>`;
+            }
+            return (
             <div style={{ borderRadius: 12, overflow: 'hidden', border: '1px solid #e2e8f0', position: 'relative' }}>
-                {block.code ? (
+                {previewHtml ? (
                     <iframe
-                        srcDoc={block.code}
+                        srcDoc={previewHtml}
                         title="Preview"
                         sandbox="allow-same-origin"
                         style={{ width: '100%', height: 320, border: 'none', pointerEvents: 'none', borderRadius: 12, background: '#fff' }}
@@ -808,6 +815,7 @@ function BlockRenderer({ block, pc }) {
                 </div>
             </div>
         );
+        }
 
         default: return <div style={{ color: '#888', fontSize: 14 }}>Bloco: {block.type}</div>;
     }
