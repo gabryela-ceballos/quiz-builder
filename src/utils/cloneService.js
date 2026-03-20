@@ -85,7 +85,8 @@ export async function cloneAndOptimize(url, niche, mode, productDescription, onP
                 const data = JSON.parse(event.data);
 
                 if (data.type === 'progress') {
-                    if (onProgress) onProgress(data.stage, data.msg, data);
+                    // Skip heartbeat events (keepalive, don't show in UI)
+                    if (data.stage !== 'heartbeat' && onProgress) onProgress(data.stage, data.msg, data);
                     // Track partial quiz data as it arrives
                     if (data.partialQuiz) partialQuiz = data.partialQuiz;
                     if (data.stage === 'page_done') clonedPageCount++;

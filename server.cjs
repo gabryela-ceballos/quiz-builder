@@ -1194,28 +1194,41 @@ app.get('/api/clone-stream', async (req, res) => {
 
     // SSE headers
     res.setHeader('Content-Type', 'text/event-stream');
-    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
     res.setHeader('Connection', 'keep-alive');
     res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('X-Accel-Buffering', 'no'); // Prevent nginx/proxy buffering
     res.flushHeaders();
 
-    // Increase timeout for long-running clone operations (5 minutes)
-    req.setTimeout(300000);
-    res.setTimeout(300000);
+    // Tell browser to retry quickly if disconnected
+    res.write('retry: 3000\n\n');
+
+    // Increase timeout for long-running clone operations (10 minutes)
+    req.setTimeout(600000);
+    res.setTimeout(600000);
+    if (req.socket) req.socket.setTimeout(600000);
 
     // Generate a unique session ID for asset storage
     const cloneSessionId = 'clone_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 
+    // Track if client disconnected
+    let clientDisconnected = false;
+    req.on('close', () => { clientDisconnected = true; });
+
     const send = (type, data) => {
         try {
-            if (!res.writableEnded) res.write(`data: ${JSON.stringify({ type, ...data })}\n\n`);
+            if (!res.writableEnded && !clientDisconnected) res.write(`data: ${JSON.stringify({ type, ...data })}\n\n`);
         } catch (e) { /* connection already closed */ }
     };
 
-    // Keep connection alive with periodic pings every 15 seconds
+    // Keep connection alive with REAL data events every 5 seconds (proxies/Safari may ignore comments)
     const keepAlive = setInterval(() => {
-        try { res.write(': keepalive\n\n'); } catch {}
-    }, 15000);
+        try {
+            if (!res.writableEnded && !clientDisconnected) {
+                send('progress', { stage: 'heartbeat', msg: '⏳ Processando...', pct: -1 });
+            }
+        } catch {}
+    }, 5000);
 
     let browser;
     try {
