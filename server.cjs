@@ -3172,7 +3172,8 @@ IMPORTANT RULES:
             ],
             collectLead,
         };
-        send('progress', { stage: 'building', msg: `🧱 Montando quiz com ${allPages.length} páginas...`, pct: 92, partialQuiz: earlyResult });
+        send('progress', { stage: 'building', msg: `🧱 Montando quiz com ${allPages.length} páginas...`, pct: 92 });
+        send('result', { quiz: earlyResult });
 
         // ═══ TRANSLATE PAGES IF LANGUAGE SELECTED ═══
         console.log(`[Clone-Stream] Translation check: targetLang="${targetLang}", OPENAI_KEY=${OPENAI_KEY ? 'SET' : 'NOT SET'}, pages=${allPages.length}`);
