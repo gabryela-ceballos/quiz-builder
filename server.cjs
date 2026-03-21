@@ -1249,91 +1249,16 @@ async function runCloneJob(jobId, url, targetLang) {
     };
 
     try {
-        addProgress('connecting', '🌐 Conectando ao servidor...', 5);
+        // Call the scraping logic DIRECTLY — no HTTP loopback
+        const send = (type, data) => {
+            if (type === 'progress' && data.stage !== 'heartbeat') {
+                addProgress(data.stage, data.msg, data.pct);
+            }
+        };
 
-        // Call /api/clone-stream internally via HTTP — but with proper headers
-        // to prevent compression buffering of the SSE stream
-        const internalUrl = `http://127.0.0.1:${PORT}/api/clone-stream?url=${encodeURIComponent(url)}${targetLang ? '&lang=' + targetLang : ''}`;
-        
-        const result = await new Promise((resolve, reject) => {
-            const http = require('http');
-            let buffer = '';
-            let quizData = null;
-            let lastProgressStage = '';
-            let settled = false;
+        const quizResult = await runCloneScrape(url, targetLang, send);
 
-            const finish = (fn, val) => {
-                if (settled) return;
-                settled = true;
-                fn(val);
-            };
-
-            const reqInternal = http.get(internalUrl, {
-                headers: {
-                    'Accept': 'text/event-stream',  // Prevents compression middleware from buffering
-                    'Cache-Control': 'no-cache',
-                },
-            }, (resp) => {
-                resp.setEncoding('utf8');
-
-                resp.on('data', (chunk) => {
-                    buffer += chunk;
-                    // Parse SSE events: each event ends with \n\n
-                    let idx;
-                    while ((idx = buffer.indexOf('\n\n')) !== -1) {
-                        const block = buffer.slice(0, idx);
-                        buffer = buffer.slice(idx + 2);
-
-                        for (const line of block.split('\n')) {
-                            if (!line.startsWith('data: ')) continue;
-                            try {
-                                const data = JSON.parse(line.slice(6));
-                                if (data.type === 'progress' && data.stage !== 'heartbeat') {
-                                    if (data.stage !== lastProgressStage || data.msg !== job.progress[job.progress.length - 1]?.msg) {
-                                        addProgress(data.stage, data.msg, data.pct);
-                                        lastProgressStage = data.stage;
-                                    }
-                                }
-                                if (data.type === 'result') {
-                                    quizData = data.quiz;
-                                }
-                                if (data.type === 'error') {
-                                    finish(reject, new Error(data.error));
-                                }
-                            } catch {}
-                        }
-                    }
-                });
-
-                resp.on('end', () => {
-                    // Process any remaining buffer
-                    if (buffer.trim()) {
-                        for (const line of buffer.split('\n')) {
-                            if (!line.startsWith('data: ')) continue;
-                            try {
-                                const data = JSON.parse(line.slice(6));
-                                if (data.type === 'result') quizData = data.quiz;
-                                if (data.type === 'error') { finish(reject, new Error(data.error)); return; }
-                            } catch {}
-                        }
-                    }
-                    if (quizData) finish(resolve, quizData);
-                    else finish(reject, new Error('Nenhum dado recebido do clone-stream'));
-                });
-
-                resp.on('error', (err) => finish(reject, err));
-            });
-
-            reqInternal.on('error', (err) => finish(reject, err));
-            // 10 minute timeout
-            reqInternal.setTimeout(600000, () => {
-                reqInternal.destroy();
-                if (quizData) finish(resolve, quizData);
-                else finish(reject, new Error('Timeout na clonagem (10 min)'));
-            });
-        });
-
-        job.result = result;
+        job.result = quizResult;
         job.status = 'done';
         addProgress('complete', `✅ Quiz clonado com sucesso!`, 100);
 
@@ -1345,11 +1270,9 @@ async function runCloneJob(jobId, url, targetLang) {
     }
 }
 
-// ── Quiz Clone SSE (real-time progress — kept for backward compatibility) ──
-
 app.get('/api/clone-stream', async (req, res) => {
     const url = req.query.url;
-    const targetLang = req.query.lang || null; // e.g. 'pt', 'en', 'es', 'fr', 'de'
+    const targetLang = req.query.lang || null;
     if (!url) return res.status(400).json({ error: 'URL obrigatória' });
 
     // SSE headers
@@ -1357,21 +1280,14 @@ app.get('/api/clone-stream', async (req, res) => {
     res.setHeader('Cache-Control', 'no-cache, no-transform');
     res.setHeader('Connection', 'keep-alive');
     res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('X-Accel-Buffering', 'no'); // Prevent nginx/proxy buffering
+    res.setHeader('X-Accel-Buffering', 'no');
     res.flushHeaders();
-
-    // Tell browser to retry quickly if disconnected
     res.write('retry: 3000\n\n');
 
-    // Increase timeout for long-running clone operations (10 minutes)
     req.setTimeout(600000);
     res.setTimeout(600000);
     if (req.socket) req.socket.setTimeout(600000);
 
-    // Generate a unique session ID for asset storage
-    const cloneSessionId = 'clone_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-
-    // Track if client disconnected
     let clientDisconnected = false;
     req.on('close', () => { clientDisconnected = true; });
 
@@ -1381,7 +1297,6 @@ app.get('/api/clone-stream', async (req, res) => {
         } catch (e) { /* connection already closed */ }
     };
 
-    // Keep connection alive with REAL data events every 5 seconds (proxies/Safari may ignore comments)
     const keepAlive = setInterval(() => {
         try {
             if (!res.writableEnded && !clientDisconnected) {
@@ -1390,6 +1305,22 @@ app.get('/api/clone-stream', async (req, res) => {
         } catch {}
     }, 5000);
 
+    try {
+        const quizResult = await runCloneScrape(url, targetLang, send);
+        send('result', { quiz: quizResult });
+        send('progress', { stage: 'complete', msg: `✅ Clonagem concluída!`, pct: 100 });
+    } catch (err) {
+        console.error('[Clone-Stream] Error:', err.message);
+        send('error', { error: err.message || 'Erro ao clonar' });
+    } finally {
+        clearInterval(keepAlive);
+        res.end();
+    }
+});
+
+// ═══ Core clone scraping logic — used by both runCloneJob and /api/clone-stream ═══
+async function runCloneScrape(url, targetLang, send) {
+    const cloneSessionId = 'clone_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
     let browser;
     try {
         send('progress', { stage: 'connecting', msg: '🌐 Conectando ao servidor...', pct: 5 });
@@ -3514,19 +3445,16 @@ IMPORTANT RULES:
         };
 
         send('progress', { stage: 'building', msg: `🧱 Montando quiz com ${allPages.length} páginas...`, pct: 98 });
-        send('result', { quiz: quizResult });
-        send('progress', { stage: 'complete', msg: `✅ ${allPages.length} páginas clonadas com formato visual!`, pct: 100 });
-        clearInterval(keepAlive);
-        res.end();
+
+        // Return the quiz result directly (caller handles sending/storing)
+        return quizResult;
 
     } catch (err) {
-        console.error('[Clone-Stream] Error:', err.message);
+        console.error('[Clone-Scrape] Error:', err.message);
         if (browser) try { await browser.close(); } catch { }
-        send('error', { error: err.message || 'Erro ao clonar' });
-        clearInterval(keepAlive);
-        res.end();
+        throw err; // Let caller handle the error
     }
-});
+}
 
 // ── Quiz Clone (Puppeteer page-by-page scrape) ──
 
