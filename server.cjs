@@ -2982,6 +2982,54 @@ IMPORTANT RULES:
                         });
                     }).catch(() => {});
                     
+                    // 6. Puppeteer-level native mouse DRAG for horizontal ruler/scroll pickers
+                    // These elements require actual mouse drag events that JS dispatch can't simulate
+                    try {
+                        const rulerElements = await pg.evaluate(() => {
+                            const results = [];
+                            // Look for scrollable containers, ruler elements, custom pickers
+                            const selectors = '[class*="ruler"], [class*="scroll"], [class*="picker"], [class*="slider"], [class*="scale"], [class*="range"], [class*="wheel"], [class*="weight"], [class*="height"], [class*="selector"], [class*="carousel"], [class*="horizontal"]';
+                            for (const el of document.querySelectorAll(selectors)) {
+                                const r = el.getBoundingClientRect();
+                                // Must be visible, reasonably sized, and look like a horizontal element
+                                if (r.height > 20 && r.width > 100 && r.top > 0 && r.top < 1200) {
+                                    // Check if it has horizontal overflow (scrollable)
+                                    const isScrollable = el.scrollWidth > el.clientWidth || el.classList.toString().match(/ruler|scroll|picker|slider/i);
+                                    if (isScrollable || r.width > 200) {
+                                        results.push({ x: r.x + r.width / 2, y: r.y + r.height / 2, w: r.width, h: r.height });
+                                    }
+                                }
+                            }
+                            return results;
+                        });
+                        
+                        if (rulerElements.length > 0) {
+                            console.log(`[Clone-Stream] 📏 Found ${rulerElements.length} ruler/picker elements, dragging...`);
+                            for (const ruler of rulerElements) {
+                                // Drag from center to left (simulates scrolling right / picking a value)
+                                await pg.mouse.move(ruler.x + 50, ruler.y);
+                                await pg.mouse.down();
+                                // Drag slowly — some frameworks need intermediate move events
+                                for (let step = 0; step < 5; step++) {
+                                    await pg.mouse.move(ruler.x + 50 - (step * 20), ruler.y);
+                                    await delay(50);
+                                }
+                                await pg.mouse.up();
+                                await delay(500);
+                                
+                                // Also try dragging in the opposite direction
+                                await pg.mouse.move(ruler.x - 50, ruler.y);
+                                await pg.mouse.down();
+                                for (let step = 0; step < 5; step++) {
+                                    await pg.mouse.move(ruler.x - 50 + (step * 20), ruler.y);
+                                    await delay(50);
+                                }
+                                await pg.mouse.up();
+                                await delay(500);
+                            }
+                        }
+                    } catch (e) { console.log('[Clone-Stream] Ruler drag error:', e.message); }
+                    
                     await delay(1500);
                     
                     // After interacting, look for submit buttons that may have appeared
