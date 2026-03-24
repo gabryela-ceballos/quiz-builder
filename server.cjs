@@ -1391,8 +1391,8 @@ async function runCloneScrape(url, targetLang, send) {
         };
 
         // ── Reuse the same scrape logic as /api/clone-quiz ──
-        const MAX_PAGES = 60;
-        const MAX_STUCK = 6;
+        const MAX_PAGES = 80;
+        const MAX_STUCK = 20; // only 30-min timeout should stop the loop
         const LOOP_TIMEOUT_MS = 30 * 60 * 1000; // 30 minute hard timeout for large quizzes
         let allPages = [], welcomeData = null, collectLead = false;
         let prevHash = '', stuckCount = 0, sameTitleCount = 0, prevTitle = '';
@@ -2402,12 +2402,13 @@ async function runCloneScrape(url, targetLang, send) {
             const currentTitle = (screen.mainTitle || '').trim();
             if (hash === prevHash) {
                 stuckCount++;
+                console.log(`[Clone-Stream] ⚠️ Same hash (stuck ${stuckCount})`);
                 if (stuckCount >= MAX_STUCK) { send('progress', { stage: 'done', msg: `⛔ Quiz travou após ${allPages.length} páginas`, pct: 90 }); break; }
             } else { stuckCount = 0; }
             // Track same-title loops (hash changes due to checkbox toggles but page is the same)
             if (currentTitle.length > 5 && currentTitle === prevTitle) {
                 sameTitleCount++;
-                if (sameTitleCount >= 8) {
+                if (sameTitleCount >= 15) {
                     console.log(`[Clone-Stream] Same page title detected ${sameTitleCount} times, forcing advance...`);
                     stuckCount = MAX_STUCK;
                     send('progress', { stage: 'done', msg: `⛔ Não foi possível avançar. ${allPages.length} páginas clonadas.`, pct: 90 });
@@ -3224,6 +3225,33 @@ IMPORTANT RULES:
             if (!advanced) { try { await pg.mouse.click(215, 450); await delay(2000); if (await getContentHash() !== prevHash) advanced = true; } catch { } }
             // Fallback: keyboard
             if (!advanced) { for (const key of ['Enter', 'Space', 'ArrowRight']) { try { await pg.keyboard.press(key); await delay(1500); if (await getContentHash() !== prevHash) { advanced = true; break; } } catch { } } }
+            // Fallback: try ALL cursor:pointer elements on the page
+            if (!advanced) {
+                const allPointers = await pg.evaluate(() => {
+                    const results = [];
+                    for (const el of document.querySelectorAll('button, a, label, div, span, [role="button"]')) {
+                        const r = el.getBoundingClientRect();
+                        if (r.height < 15 || r.width < 30 || r.top > 1200 || r.top < 0) continue;
+                        const style = getComputedStyle(el);
+                        if (style.cursor !== 'pointer') continue;
+                        const text = (el.innerText || '').trim();
+                        if (text.length < 1 || text.length > 200) continue;
+                        if (el.disabled || style.display === 'none') continue;
+                        results.push({ x: r.x + r.width/2, y: r.y + r.height/2, text: text.slice(0,40) });
+                    }
+                    return results;
+                });
+                for (const ptr of allPointers) {
+                    prevHash = await getContentHash();
+                    await pg.mouse.click(ptr.x, ptr.y);
+                    await delay(2000);
+                    if (await getContentHash() !== prevHash) {
+                        console.log(`[Clone-Stream] 🎯 Pointer fallback worked: "${ptr.text}"`);
+                        advanced = true;
+                        break;
+                    }
+                }
+            }
 
             // ── Track consecutive failed advances ──
             // Even if hash changed (from tooltip/focus), check if we actually collected a NEW page
@@ -3231,7 +3259,7 @@ IMPORTANT RULES:
             if (!advanced) {
                 failedAdvanceCount++;
                 console.log(`[Clone-Stream] ❌ Failed to advance (${failedAdvanceCount} consecutive failures)`);
-                if (failedAdvanceCount >= 8) {
+                if (failedAdvanceCount >= 20) {
                     send('progress', { stage: 'done', msg: `⛔ Não foi possível avançar. ${allPages.length} páginas clonadas.`, pct: 90 });
                     break;
                 }
@@ -3239,7 +3267,7 @@ IMPORTANT RULES:
                 // "Advanced" but no new unique page was collected — likely a false advance
                 failedAdvanceCount++;
                 console.log(`[Clone-Stream] ⚠️ Advanced but no new page collected (${failedAdvanceCount} failures)`);
-                if (failedAdvanceCount >= 10) {
+                if (failedAdvanceCount >= 25) {
                     send('progress', { stage: 'done', msg: `⛔ Quiz não avança mais. ${allPages.length} páginas clonadas.`, pct: 90 });
                     break;
                 }
