@@ -1393,7 +1393,7 @@ async function runCloneScrape(url, targetLang, send) {
         // ── Reuse the same scrape logic as /api/clone-quiz ──
         const MAX_PAGES = 60;
         const MAX_STUCK = 6;
-        const LOOP_TIMEOUT_MS = 5 * 60 * 1000; // 5 minute hard timeout
+        const LOOP_TIMEOUT_MS = 10 * 60 * 1000; // 10 minute hard timeout for large quizzes
         let allPages = [], welcomeData = null, collectLead = false;
         let prevHash = '', stuckCount = 0, sameTitleCount = 0, prevTitle = '';
         let failedAdvanceCount = 0; // tracks consecutive iterations where no new page was collected
@@ -2885,13 +2885,6 @@ IMPORTANT RULES:
             }
 
             if (!advanced && options.length === 0) {
-                // Per-page timeout: skip if this page has been processing for >45s
-                if (Date.now() - pageStartTime > 45000) {
-                    console.log('[Clone-Stream] ⏰ Page timeout (45s), skipping...');
-                    failedAdvanceCount++;
-                    if (failedAdvanceCount >= 4) { send('progress', { stage: 'done', msg: `⛔ Timeout após ${allPages.length} páginas`, pct: 90 }); break; }
-                    continue;
-                }
                 // ── INFO / SLIDER / INPUT PAGE (no options, just a submit/continue button) ──
                 console.log('[Clone-Stream] Info page, looking for submit buttons...');
                 
