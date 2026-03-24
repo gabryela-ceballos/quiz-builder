@@ -1634,14 +1634,17 @@ async function runCloneScrape(url, targetLang, send) {
             };
         };
 
-        const getContentHash = async () => pg.evaluate(() => {
-            const main = document.querySelector('main, [role="main"], .main-content, #app, #root, #__next') || document.body;
-            const text = (main.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 500);
-            // Also hash the DOM structure for SPA transitions that change layout but not text
-            const elCount = main.querySelectorAll('*').length;
-            const imgCount = main.querySelectorAll('img').length;
-            return `${text}|e${elCount}|i${imgCount}`;
-        });
+        const getContentHash = async () => {
+            const url = pg.url();
+            const content = await pg.evaluate(() => {
+                const main = document.querySelector('main, [role="main"], .main-content, #app, #root, #__next') || document.body;
+                const text = (main.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 500);
+                const elCount = main.querySelectorAll('*').length;
+                const imgCount = main.querySelectorAll('img').length;
+                return `${text}|e${elCount}|i${imgCount}`;
+            });
+            return `${url}|${content}`;
+        };
 
         // Install mutation observer in the page for reliable change detection
         await pg.evaluate(() => {
@@ -1664,22 +1667,25 @@ async function runCloneScrape(url, targetLang, send) {
 
         const clickAndWait = async (clickable) => {
             try {
-                // Reset mutation flag
+                const urlBefore = pg.url();
                 await pg.evaluate(() => { window.__cloneMutated = false; window.__cloneMutationCount = 0; });
                 
-                // Strategy 1: Native Puppeteer click (works best with SPA frameworks)
+                // Strategy 1: Native click
                 await pg.mouse.click(clickable.x, clickable.y);
-                await delay(800);
+                await delay(1200);
                 
-                // Check mutation flag first (fastest signal)
+                // Check URL change first (SPA navigation)
+                if (pg.url() !== urlBefore) { await delay(800); return true; }
+                
+                // Check mutation
                 let mutated = await pg.evaluate(() => window.__cloneMutated);
                 if (mutated) {
-                    await delay(1500); // Let SPA transition complete
+                    await delay(1200);
                     const newHash = await getContentHash();
                     if (newHash !== prevHash) return true;
                 }
                 
-                // Strategy 2: JavaScript dispatchEvent (for elements that need synthetic events)
+                // Strategy 2: JS dispatchEvent
                 await pg.evaluate(({ x, y }) => {
                     const el = document.elementFromPoint(x, y);
                     if (!el) return;
@@ -1699,14 +1705,14 @@ async function runCloneScrape(url, targetLang, send) {
                     target.dispatchEvent(new MouseEvent('click', opts));
                 }, { x: clickable.x, y: clickable.y });
                 
-                await delay(800);
+                await delay(1200);
                 
-                // Check both mutation flag and content hash
+                // Re-check URL + mutation + hash
+                if (pg.url() !== urlBefore) { await delay(800); return true; }
                 mutated = await pg.evaluate(() => window.__cloneMutated);
                 const newHash = await getContentHash();
                 if (newHash !== prevHash || mutated) {
-                    // Extra wait for transition to fully complete
-                    if (mutated && newHash === prevHash) await delay(1500);
+                    if (mutated && newHash === prevHash) await delay(1200);
                     const finalHash = await getContentHash();
                     if (finalHash !== prevHash) return true;
                 }
@@ -2560,6 +2566,7 @@ async function runCloneScrape(url, targetLang, send) {
 
             // ── Advance strategies (improved for multi-page quizzes) ──
             let advanced = false;
+            const pageStartTime = Date.now();
 
             // ═══ FORM PAGE HANDLER: after filling inputs, click submit ═══
             if (!advanced && (type === 'lead' || type === 'input') && screen.inputs.length > 0) {
@@ -2771,7 +2778,11 @@ IMPORTANT RULES:
 7. Return ONLY {"actions": [...]}`;
 
 
-                    const aiResult = await callOpenAI(aiPrompt, { temperature: 0, maxTokens: 200 });
+                    const aiResult = await Promise.race([
+                        callOpenAI(aiPrompt, { temperature: 0, maxTokens: 200 }),
+                        new Promise(resolve => setTimeout(() => resolve(null), 8000))
+                    ]);
+                    if (!aiResult) console.log('[Clone-Stream] 🤖 AI timeout (8s), using fallbacks');
                     let actions = aiResult?.actions;
                     
                     // SAFETY: If multi-select page but AI only returned 1 click (no submit), inject submit step
@@ -2870,6 +2881,13 @@ IMPORTANT RULES:
             }
 
             if (!advanced && options.length === 0) {
+                // Per-page timeout: skip if this page has been processing for >45s
+                if (Date.now() - pageStartTime > 45000) {
+                    console.log('[Clone-Stream] ⏰ Page timeout (45s), skipping...');
+                    failedAdvanceCount++;
+                    if (failedAdvanceCount >= 4) { send('progress', { stage: 'done', msg: `⛔ Timeout após ${allPages.length} páginas`, pct: 90 }); break; }
+                    continue;
+                }
                 // ── INFO / SLIDER / INPUT PAGE (no options, just a submit/continue button) ──
                 console.log('[Clone-Stream] Info page, looking for submit buttons...');
                 
