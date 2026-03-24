@@ -1447,18 +1447,22 @@ async function runCloneScrape(url, targetLang, send) {
             for (const el of document.querySelectorAll('button, a, [role="button"], [onclick], label, div, span, li')) {
                 const r = el.getBoundingClientRect();
                 if (r.height <= 5 || r.width <= 5 || r.height > 200) continue;
-                const text = (el.innerText || '').trim();
+                // Use innerText, fall back to textContent for elements with nested spans
+                let text = (el.innerText || '').trim();
+                if (!text) text = (el.textContent || '').trim();
                 if (!text || text.length === 0 || text.length > 300) continue;
-                const isNav = /voltar|back|prev|skip|pular|anterior|logo|cookie|privacy|privacidade|termos|fechar|close|sign.?up|sign.?in|log.?in|register|pricing|features|blog|about|contact|home|faq|pol[ií]tica|inlead|central de an[úu]ncios|criado via|© \d{4}|todas as suas respostas|t[eé]rminos|condiciones|suscripci[oó]n|derechos reservados|cookies/i.test(text);
+                const isNav = /voltar|back|prev|skip|pular|anterior|logo|cookie|privacy|privacidade|termos|fechar|close|sign.?up|sign.?in|log.?in|register|pricing|features|blog|about|contact|home|faq|pol[ií]tica|inlead|central de an[úu]ncios|criado via|© \d{4}|todas as suas respostas|t[eé]rminos|condiciones|suscripci[oó]n|derechos reservados|cookies|terms of service|cookie policy|subscription|my program|cancel|money.back/i.test(text);
                 if (isNav) continue;
-                const isSubmitText = /^(próximo|next|continuar|continue|começar|start|enviar|submit|avançar|advance|ok|prosseguir|ver resultado|iniciar|vamos lá|quero|bora|let'?s go|take the quiz|get started|take quiz|start quiz|toque aqui|clique para|clique aqui|comece agora|clique e|saiba mais|ver mais|siguiente|comenzar|empezar|aceptar|confirmar|prueba|test|gratis|gratuito)$/i.test(text.replace(/[→►▶\s]/g, '').trim()) || /continuar|começar|comece|start|toque|siguiente|comenzar|continuer|weiter|avançar|próximo|continue|submit|enviar|prueba|test/i.test(text);
+                const tag = el.tagName.toLowerCase();
+                // Skip small links in header (top<70) or footer (bottom of page) — logo, terms, etc.
+                if (tag === 'a' && (r.top < 70 || r.top > 880) && r.height < 50 && text.length < 40) continue;
+                const isSubmitText = /^(próximo|next|continuar|continue|começar|start|enviar|submit|avançar|advance|ok|prosseguir|ver resultado|iniciar|vamos lá|quero|bora|let'?s go|take the quiz|get started|take quiz|start quiz|toque aqui|clique para|clique aqui|comece agora|clique e|saiba mais|ver mais|siguiente|comenzar|empezar|aceptar|confirmar|prueba|test|gratis|gratuito|next step|weiter|continuer)$/i.test(text.replace(/[→►▶\s]/g, '').trim()) || /continuar|começar|comece|start|toque|siguiente|comenzar|continuer|weiter|avançar|próximo|continue|submit|enviar|next step/i.test(text);
                 const style = getComputedStyle(el);
                 const isPointer = style.cursor === 'pointer';
-                const tag = el.tagName.toLowerCase();
-                const isClickable = tag === 'button' || tag === 'a' || el.getAttribute('role') === 'button' || isPointer;
+                const isClickable = tag === 'button' || tag === 'a' || tag === 'label' || el.getAttribute('role') === 'button' || isPointer;
                 const isSubmit = isSubmitText;
                 const isDisabled = el.disabled || el.classList.contains('cursor-not-allowed') || el.getAttribute('aria-disabled') === 'true' || style.cursor === 'not-allowed';
-                if (text.length > 2 && text.length < 200 && !seen.has(text) && (isClickable || isSubmit)) {
+                if (text.length > 1 && text.length < 200 && !seen.has(text) && (isClickable || isSubmit)) {
                     seen.add(text);
                     clickables.push({ text, isSubmit, isDisabled, tag, x: r.x + r.width / 2, y: r.y + r.height / 2, w: r.width, h: r.height, bgColor: style.backgroundColor, color: style.color, borderRadius: style.borderRadius });
                 }
@@ -1468,8 +1472,8 @@ async function runCloneScrape(url, targetLang, send) {
                 const r = el.getBoundingClientRect(); return r.height > 0 && r.width > 0;
             }).map(el => ({ type: el.type || el.tagName.toLowerCase(), name: el.name || el.placeholder || '', label: el.labels?.[0]?.innerText || '' }));
 
-            // Detect checkboxes and radio buttons (including visual ones)
-            const checkboxes = [...document.querySelectorAll('input[type="checkbox"], input[type="radio"], [role="checkbox"], [role="radio"], [data-state], [aria-checked]')].filter(el => {
+            // Detect ONLY checkboxes for multi-select (NOT radio buttons — radios = single-choice)
+            const checkboxes = [...document.querySelectorAll('input[type="checkbox"], [role="checkbox"]')].filter(el => {
                 const r = el.getBoundingClientRect(); return r.height > 0 && r.width > 0 && r.top < 1200;
             });
             // Also detect visual checkboxes (□, ☐, ☑ characters or styled checkbox-like elements)
@@ -2891,8 +2895,13 @@ IMPORTANT RULES:
                 // ── INFO / SLIDER / INPUT PAGE (no options, just a submit/continue button) ──
                 console.log('[Clone-Stream] Info page, looking for submit buttons...');
                 
-                // Try standard submit buttons
-                const allSubmits = findSubmits(screen);
+                // Scroll to bottom first to reveal hidden buttons
+                await pg.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+                await delay(500);
+                
+                // Re-extract with fresh coordinates after scroll
+                const freshInfoScreen = await extractScreen();
+                const allSubmits = findSubmits(freshInfoScreen);
                 if (allSubmits.length > 0) {
                     for (const btn of allSubmits) {
                         advanced = await clickAndWait(btn);
