@@ -1393,7 +1393,7 @@ async function runCloneScrape(url, targetLang, send) {
         // ── Reuse the same scrape logic as /api/clone-quiz ──
         const MAX_PAGES = 60;
         const MAX_STUCK = 6;
-        const LOOP_TIMEOUT_MS = 10 * 60 * 1000; // 10 minute hard timeout for large quizzes
+        const LOOP_TIMEOUT_MS = 30 * 60 * 1000; // 30 minute hard timeout for large quizzes
         let allPages = [], welcomeData = null, collectLead = false;
         let prevHash = '', stuckCount = 0, sameTitleCount = 0, prevTitle = '';
         let failedAdvanceCount = 0; // tracks consecutive iterations where no new page was collected
