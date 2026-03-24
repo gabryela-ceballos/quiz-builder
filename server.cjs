@@ -2422,7 +2422,7 @@ async function runCloneScrape(url, targetLang, send) {
 
             const pageHash = hash;
             const pageTitle = (screen.mainTitle || '').trim();
-            const isDuplicate = allPages.some(p => p._hash === pageHash || (pageTitle.length > 5 && p._title === pageTitle));
+            const isDuplicate = allPages.some(p => p._hash === pageHash);
             if (isDuplicate) {
                 // skip — same hash or same title (e.g. multi-select page after option click)
             } else if (type === 'lead' || type === 'input') {
