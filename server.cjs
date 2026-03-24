@@ -1391,8 +1391,8 @@ async function runCloneScrape(url, targetLang, send) {
         };
 
         // ── Reuse the same scrape logic as /api/clone-quiz ──
-        const MAX_PAGES = 40;
-        const MAX_STUCK = 3;
+        const MAX_PAGES = 60;
+        const MAX_STUCK = 6;
         const LOOP_TIMEOUT_MS = 5 * 60 * 1000; // 5 minute hard timeout
         let allPages = [], welcomeData = null, collectLead = false;
         let prevHash = '', stuckCount = 0, sameTitleCount = 0, prevTitle = '';
@@ -2407,7 +2407,7 @@ async function runCloneScrape(url, targetLang, send) {
             // Track same-title loops (hash changes due to checkbox toggles but page is the same)
             if (currentTitle.length > 5 && currentTitle === prevTitle) {
                 sameTitleCount++;
-                if (sameTitleCount >= 4) {
+                if (sameTitleCount >= 8) {
                     console.log(`[Clone-Stream] Same page title detected ${sameTitleCount} times, forcing advance...`);
                     stuckCount = MAX_STUCK;
                     send('progress', { stage: 'done', msg: `⛔ Não foi possível avançar. ${allPages.length} páginas clonadas.`, pct: 90 });
@@ -3238,7 +3238,7 @@ IMPORTANT RULES:
             if (!advanced) {
                 failedAdvanceCount++;
                 console.log(`[Clone-Stream] ❌ Failed to advance (${failedAdvanceCount} consecutive failures)`);
-                if (failedAdvanceCount >= 4) {
+                if (failedAdvanceCount >= 8) {
                     send('progress', { stage: 'done', msg: `⛔ Não foi possível avançar. ${allPages.length} páginas clonadas.`, pct: 90 });
                     break;
                 }
@@ -3246,7 +3246,7 @@ IMPORTANT RULES:
                 // "Advanced" but no new unique page was collected — likely a false advance
                 failedAdvanceCount++;
                 console.log(`[Clone-Stream] ⚠️ Advanced but no new page collected (${failedAdvanceCount} failures)`);
-                if (failedAdvanceCount >= 5) {
+                if (failedAdvanceCount >= 10) {
                     send('progress', { stage: 'done', msg: `⛔ Quiz não avança mais. ${allPages.length} páginas clonadas.`, pct: 90 });
                     break;
                 }
