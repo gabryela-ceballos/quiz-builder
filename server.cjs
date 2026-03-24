@@ -2913,11 +2913,11 @@ IMPORTANT RULES:
                     }
                 }
                 
-                // Try interacting with sliders, range inputs, and custom inputs
+                // Try interacting with sliders, range inputs, scroll wheels, and custom inputs
                 if (!advanced) {
-                    console.log('[Clone-Stream] Trying to interact with sliders/inputs...');
+                    console.log('[Clone-Stream] Trying to interact with sliders/scroll inputs...');
                     await pg.evaluate(() => {
-                        // Fill range/slider inputs with middle value
+                        // 1. Fill range/slider inputs with middle value
                         document.querySelectorAll('input[type="range"]').forEach(el => {
                             const min = parseFloat(el.min) || 0;
                             const max = parseFloat(el.max) || 100;
@@ -2925,28 +2925,59 @@ IMPORTANT RULES:
                             el.dispatchEvent(new Event('input', { bubbles: true }));
                             el.dispatchEvent(new Event('change', { bubbles: true }));
                         });
-                        // Fill number inputs with reasonable defaults
-                        document.querySelectorAll('input[type="number"], input[type="text"]').forEach(el => {
-                            if (!el.value && el.getBoundingClientRect().height > 0) {
-                                const placeholder = el.placeholder?.toLowerCase() || '';
-                                if (placeholder.includes('peso') || placeholder.includes('weight') || placeholder.includes('kg')) {
-                                    el.value = '70';
-                                } else if (placeholder.includes('altura') || placeholder.includes('height') || placeholder.includes('cm')) {
-                                    el.value = '165';
-                                } else if (placeholder.includes('edad') || placeholder.includes('age') || placeholder.includes('idade')) {
-                                    el.value = '35';
-                                } else {
-                                    el.value = '50';
-                                }
+                        // 2. Fill ALL visible inputs (number, text, tel, email, etc.)
+                        document.querySelectorAll('input:not([type="hidden"]):not([type="checkbox"]):not([type="radio"]):not([type="submit"]):not([type="button"]), textarea').forEach(el => {
+                            const r = el.getBoundingClientRect();
+                            if (r.height <= 0 || r.width <= 0) return;
+                            if (el.value && el.value.length > 0) return; // already filled
+                            const all = ((el.name || '') + ' ' + (el.placeholder || '') + ' ' + (el.id || '') + ' ' + (el.labels?.[0]?.innerText || '')).toLowerCase();
+                            let val = '';
+                            if (all.includes('email') || all.includes('correo') || el.type === 'email') val = 'teste@gmail.com';
+                            else if (all.includes('phone') || all.includes('tel') || all.includes('whatsapp') || all.includes('celular') || el.type === 'tel') val = '11999999999';
+                            else if (all.includes('name') || all.includes('nome') || all.includes('nombre')) val = 'Maria';
+                            else if (all.includes('peso') || all.includes('weight') || all.includes('kg')) val = '70';
+                            else if (all.includes('altura') || all.includes('height') || all.includes('cm') || all.includes('estatura')) val = '165';
+                            else if (all.includes('edad') || all.includes('age') || all.includes('idade') || all.includes('años')) val = '35';
+                            else if (all.includes('meta') || all.includes('goal') || all.includes('objetivo')) val = '60';
+                            else if (el.type === 'number') val = '50';
+                            else val = 'teste';
+                            if (val) {
+                                el.focus();
+                                el.value = val;
                                 el.dispatchEvent(new Event('input', { bubbles: true }));
                                 el.dispatchEvent(new Event('change', { bubbles: true }));
+                                el.dispatchEvent(new Event('blur', { bubbles: true }));
                             }
                         });
-                        // Click on any custom slider/dial elements
-                        document.querySelectorAll('[class*="slider"], [class*="range"], [class*="dial"], [class*="thumb"], [class*="knob"], [class*="picker"]').forEach(el => {
+                        // 3. Handle scroll-wheel/picker elements (weight, height selectors)
+                        const scrollContainers = document.querySelectorAll(
+                            '[class*="scroll"], [class*="picker"], [class*="wheel"], [class*="selector"], [class*="ruler"], [class*="scale"], [class*="dial"], [class*="counter"], [class*="number-pick"], [class*="weight"], [class*="height"], [class*="spinner"], [data-type*="scroll"], [data-type*="picker"]'
+                        );
+                        scrollContainers.forEach(el => {
+                            const r = el.getBoundingClientRect();
+                            if (r.height < 10 || r.width < 10) return;
+                            // Dispatch wheel events to simulate scrolling
+                            for (let i = 0; i < 5; i++) {
+                                el.dispatchEvent(new WheelEvent('wheel', { deltaY: -30, bubbles: true }));
+                            }
+                            // Also try touch events for mobile-style pickers
+                            const cx = r.x + r.width / 2, cy = r.y + r.height / 2;
+                            el.dispatchEvent(new TouchEvent('touchstart', { bubbles: true, touches: [new Touch({ identifier: 1, target: el, clientX: cx, clientY: cy + 50 })] }));
+                            el.dispatchEvent(new TouchEvent('touchmove', { bubbles: true, touches: [new Touch({ identifier: 1, target: el, clientX: cx, clientY: cy })] }));
+                            el.dispatchEvent(new TouchEvent('touchend', { bubbles: true, changedTouches: [new Touch({ identifier: 1, target: el, clientX: cx, clientY: cy })] }));
+                        });
+                        // 4. Click on custom slider/dial/thumb elements
+                        document.querySelectorAll('[class*="slider"], [class*="range"], [class*="dial"], [class*="thumb"], [class*="knob"], [class*="picker"], [class*="handle"]').forEach(el => {
                             const r = el.getBoundingClientRect();
                             if (r.height > 10 && r.width > 10) {
                                 el.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: r.x + r.width/2, clientY: r.y + r.height/2 }));
+                            }
+                        });
+                        // 5. Also try select dropdowns
+                        document.querySelectorAll('select').forEach(el => {
+                            if (el.options.length > 1) {
+                                el.selectedIndex = Math.min(1, el.options.length - 1);
+                                el.dispatchEvent(new Event('change', { bubbles: true }));
                             }
                         });
                     }).catch(() => {});
