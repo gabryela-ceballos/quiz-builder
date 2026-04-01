@@ -99,32 +99,16 @@ export default function DomainSettings({ quizId }) {
 
     // Render DNS records table for a domain
     const renderDnsRecords = (domain) => {
-        const records = domain.dnsRecords;
-        if (!records || records.length === 0) {
-            // Fallback: show generic CNAME instruction
-            return (
-                <div style={{ padding: '12px 14px', borderRadius: 10, background: '#f8fafc', border: '1px solid var(--border)', fontSize: '0.82rem' }}>
-                    <div style={{ fontWeight: 600, marginBottom: 8, fontSize: '0.78rem', color: 'var(--text-muted)' }}>📋 Configure no DNS do seu registrador:</div>
-                    <div style={{ display: 'grid', gridTemplateColumns: '60px 80px 1fr 36px', gap: '6px 10px', alignItems: 'center' }}>
-                        <span style={{ fontWeight: 600, fontSize: '0.72rem', color: 'var(--text-muted)' }}>Tipo</span>
-                        <span style={{ fontWeight: 600, fontSize: '0.72rem', color: 'var(--text-muted)' }}>Nome</span>
-                        <span style={{ fontWeight: 600, fontSize: '0.72rem', color: 'var(--text-muted)' }}>Valor</span>
-                        <span></span>
-
-                        <span style={{ fontFamily: 'monospace', fontSize: '0.8rem', fontWeight: 600, color: '#059669' }}>CNAME</span>
-                        <span style={{ fontFamily: 'monospace', fontSize: '0.8rem' }}>@</span>
-                        <span style={{ fontFamily: 'monospace', fontSize: '0.78rem', wordBreak: 'break-all', color: 'var(--text-primary)' }}>{serverHostname}</span>
-                        <button onClick={() => copyText(serverHostname, `fallback-${domain.id}`)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--primary)', padding: 4, display: 'flex', alignItems: 'center' }}>
-                            {copied === `fallback-${domain.id}` ? <Check size={14} /> : <Copy size={14} />}
-                        </button>
-                    </div>
-                </div>
-            );
-        }
+        const records = domain.dnsRecords || [];
+        // Find TXT record from Railway (if available)
+        const txtRecord = records.find(r => !r.requiredValue?.includes('.railway.app') && !r.requiredValue?.includes('.up.'));
+        const cnameVerified = records.some(r => (r.requiredValue?.includes('.railway.app') || r.requiredValue?.includes('.up.')) && (r.status === 'VERIFIED' || r.status === 'verified' || r.status === 'VALID'));
+        const txtVerified = txtRecord && (txtRecord.status === 'VERIFIED' || txtRecord.status === 'verified' || txtRecord.status === 'VALID');
 
         return (
             <div style={{ padding: '12px 14px', borderRadius: 10, background: '#f8fafc', border: '1px solid var(--border)', fontSize: '0.82rem' }}>
-                <div style={{ fontWeight: 600, marginBottom: 10, fontSize: '0.78rem', color: 'var(--text-muted)' }}>📋 Configure estes registros no DNS do seu registrador:</div>
+                <div style={{ fontWeight: 600, marginBottom: 10, fontSize: '0.78rem', color: 'var(--text-muted)' }}>📋 Configure no painel DNS do seu registrador:</div>
+                
                 <div style={{ display: 'grid', gridTemplateColumns: '60px minmax(80px, auto) 1fr 36px', gap: '8px 10px', alignItems: 'center' }}>
                     {/* Header */}
                     <span style={{ fontWeight: 700, fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Tipo</span>
@@ -132,29 +116,42 @@ export default function DomainSettings({ quizId }) {
                     <span style={{ fontWeight: 700, fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Valor</span>
                     <span></span>
 
-                    {records.map((rec, i) => {
-                        const isVerified = rec.status === 'VERIFIED' || rec.status === 'verified';
-                        const isCname = rec.requiredValue?.includes('.railway.app') || rec.requiredValue?.includes('.up.');
-                        const type = isCname ? 'CNAME' : 'TXT';
-                        const statusColor = isVerified ? '#059669' : '#d97706';
-                        const statusIcon = isVerified ? '✅' : '⏳';
-                        const key = `rec-${domain.id}-${i}`;
+                    {/* Step 1: CNAME always pointing to quizflw.com */}
+                    <span style={{ fontFamily: 'monospace', fontSize: '0.8rem', fontWeight: 600, color: cnameVerified ? '#059669' : '#d97706' }}>CNAME</span>
+                    <span style={{ fontFamily: 'monospace', fontSize: '0.8rem' }}>@</span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                        <span style={{ fontFamily: 'monospace', fontSize: '0.78rem', wordBreak: 'break-all', color: 'var(--text-primary)' }}>{serverHostname}</span>
+                        <span style={{ fontSize: '0.7rem', flexShrink: 0 }}>{cnameVerified ? '✅' : '⏳'}</span>
+                    </div>
+                    <button onClick={() => copyText(serverHostname, `cname-${domain.id}`)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--primary)', padding: 4, display: 'flex', alignItems: 'center' }}>
+                        {copied === `cname-${domain.id}` ? <Check size={14} /> : <Copy size={14} />}
+                    </button>
 
-                        return [
-                            <span key={`t-${i}`} style={{ fontFamily: 'monospace', fontSize: '0.8rem', fontWeight: 600, color: statusColor }}>{type}</span>,
-                            <span key={`n-${i}`} style={{ fontFamily: 'monospace', fontSize: '0.8rem' }}>{rec.hostlabel || '@'}</span>,
-                            <div key={`v-${i}`} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                                <span style={{ fontFamily: 'monospace', fontSize: '0.75rem', wordBreak: 'break-all', color: 'var(--text-primary)' }}>{rec.requiredValue}</span>
-                                <span style={{ fontSize: '0.7rem', flexShrink: 0 }}>{statusIcon}</span>
-                            </div>,
-                            <button key={`c-${i}`} onClick={() => copyText(rec.requiredValue, key)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--primary)', padding: 4, display: 'flex', alignItems: 'center' }}>
-                                {copied === key ? <Check size={14} /> : <Copy size={14} />}
+                    {/* Step 2: TXT record from Railway (if available) */}
+                    {txtRecord && (
+                        <>
+                            <span style={{ fontFamily: 'monospace', fontSize: '0.8rem', fontWeight: 600, color: txtVerified ? '#059669' : '#d97706' }}>TXT</span>
+                            <span style={{ fontFamily: 'monospace', fontSize: '0.8rem' }}>{txtRecord.hostlabel || '@'}</span>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                                <span style={{ fontFamily: 'monospace', fontSize: '0.72rem', wordBreak: 'break-all', color: 'var(--text-primary)' }}>{txtRecord.requiredValue}</span>
+                                <span style={{ fontSize: '0.7rem', flexShrink: 0 }}>{txtVerified ? '✅' : '⏳'}</span>
+                            </div>
+                            <button onClick={() => copyText(txtRecord.requiredValue, `txt-${domain.id}`)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--primary)', padding: 4, display: 'flex', alignItems: 'center' }}>
+                                {copied === `txt-${domain.id}` ? <Check size={14} /> : <Copy size={14} />}
                             </button>
-                        ];
-                    })}
+                        </>
+                    )}
                 </div>
-                <div style={{ marginTop: 10, fontSize: '0.72rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 4 }}>
-                    <Info size={12} /> Copie os valores acima e cole no painel DNS do seu registrador
+
+                {/* Hint about TXT appearing after CNAME */}
+                {!txtRecord && (
+                    <div style={{ marginTop: 10, padding: '8px 12px', borderRadius: 8, background: 'rgba(99,102,241,0.05)', border: '1px solid rgba(99,102,241,0.12)', fontSize: '0.72rem', color: '#4338ca' }}>
+                        💡 Configure o CNAME acima e clique em <strong>"Verificar"</strong>. O registro TXT de verificação aparecerá automaticamente.
+                    </div>
+                )}
+
+                <div style={{ marginTop: 8, fontSize: '0.72rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <Info size={12} /> Copie os valores e cole no painel DNS do seu registrador
                 </div>
             </div>
         );
