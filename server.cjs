@@ -3699,26 +3699,118 @@ IMPORTANT RULES:
                 }
             }
 
+            // ── Detect FINAL page (result/checkout/thank-you) — capture and stop gracefully ──
+            const isFinalPage = await pg.evaluate(() => {
+                const text = (document.body.innerText || '').toLowerCase();
+                const url = window.location.href.toLowerCase();
+                const finalPatterns = [
+                    /su\s*plan|your\s*plan|tu\s*plan/,
+                    /resultado|result|resultado\s*personalizado/,
+                    /checkout|payment|pagar|comprar|buy\s*now/,
+                    /obrigad[oa]|thank\s*you|gracias|merci/,
+                    /order\s*complete|pedido\s*realizado/,
+                    /congratulat|parab[eé]ns|felicidad/,
+                    /add\s*to\s*cart|a[ñn]adir.*carrito|adicionar.*carrinho/,
+                ];
+                const urlFinal = /checkout|thank|result|success|complete|order|cart|payment/.test(url);
+                const textFinal = finalPatterns.some(p => p.test(text));
+                // Also check for CTA buttons that link to external sites (checkout/sales page)
+                const externalCTA = [...document.querySelectorAll('a[href]')].some(a => {
+                    const href = a.href || '';
+                    return /checkout|cart|pay|comprar|buy|order/.test(href) && !href.includes(window.location.hostname);
+                });
+                return textFinal || urlFinal || externalCTA;
+            }).catch(() => false);
+
+            if (isFinalPage && allPages.length >= 3) {
+                console.log(`[Clone-Stream] 🏁 FINAL PAGE detected! Stopping gracefully with ${allPages.length} pages.`);
+                send('progress', { stage: 'done', msg: `🏁 Última página do quiz detectada! ${allPages.length} páginas clonadas.`, pct: 95 });
+                break;
+            }
+
             // ── Track consecutive failed advances ──
-            // Even if hash changed (from tooltip/focus), check if we actually collected a NEW page
             const pagesAfter = allPages.length;
             if (!advanced) {
                 failedAdvanceCount++;
                 console.log(`[Clone-Stream] ❌ Failed to advance (${failedAdvanceCount} consecutive failures)`);
-                if (failedAdvanceCount >= 20) {
+
+                // ═══ AI VISION FALLBACK: When stuck 5+ times, use GPT-4o Vision to analyze screenshot ═══
+                if (failedAdvanceCount >= 5 && failedAdvanceCount % 3 === 2 && OPENAI_KEY) {
+                    try {
+                        console.log(`[Clone-Stream] 📸 Taking screenshot for AI Vision analysis...`);
+                        send('progress', { stage: 'scraping', msg: `🤖 IA analisando página travada...`, pct: Math.min(85, 15 + allPages.length * 3) });
+                        const screenshotBuf = await pg.screenshot({ type: 'jpeg', quality: 85 });
+                        const screenshotB64 = screenshotBuf.toString('base64');
+                        
+                        const visionRes = await fetch('https://api.openai.com/v1/chat/completions', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${OPENAI_KEY}` },
+                            body: JSON.stringify({
+                                model: 'gpt-4o',
+                                messages: [{
+                                    role: 'system',
+                                    content: `You are a bot navigating a quiz/funnel. Look at this screenshot and determine:
+1. Is this the FINAL page of the quiz (result page, checkout, thank you, sales page)? If yes, return {"final": true}
+2. If not final, what element should I click to advance to the next page? Return the approximate coordinates as {"final": false, "click": {"x": <number>, "y": <number>, "description": "<what to click>"}}
+
+The viewport is 430x932 pixels (mobile). Return ONLY valid JSON.`
+                                }, {
+                                    role: 'user',
+                                    content: [{
+                                        type: 'image_url',
+                                        image_url: { url: `data:image/jpeg;base64,${screenshotB64}`, detail: 'low' }
+                                    }]
+                                }],
+                                temperature: 0,
+                                max_tokens: 200,
+                            })
+                        });
+                        
+                        if (visionRes.ok) {
+                            const visionData = await visionRes.json();
+                            const visionText = visionData.choices?.[0]?.message?.content || '';
+                            console.log(`[Clone-Stream] 📸 Vision response: ${visionText}`);
+                            
+                            let visionAction;
+                            try {
+                                const jsonMatch = visionText.match(/\{[\s\S]*\}/);
+                                if (jsonMatch) visionAction = JSON.parse(jsonMatch[0]);
+                            } catch {}
+                            
+                            if (visionAction?.final) {
+                                console.log(`[Clone-Stream] 📸 AI Vision says this is the FINAL page!`);
+                                send('progress', { stage: 'done', msg: `🏁 IA detectou última página! ${allPages.length} páginas clonadas.`, pct: 95 });
+                                break;
+                            } else if (visionAction?.click) {
+                                console.log(`[Clone-Stream] 📸 AI Vision says click at (${visionAction.click.x}, ${visionAction.click.y}): ${visionAction.click.description}`);
+                                prevHash = await getContentHash();
+                                await pg.mouse.click(visionAction.click.x, visionAction.click.y);
+                                await delay(3000);
+                                const nh = await getContentHash();
+                                if (nh !== prevHash) {
+                                    advanced = true;
+                                    failedAdvanceCount = 0;
+                                    console.log('[Clone-Stream] 📸 AI Vision click advanced!');
+                                }
+                            }
+                        }
+                    } catch (visionErr) {
+                        console.log('[Clone-Stream] 📸 Vision error:', visionErr.message);
+                    }
+                }
+
+                if (failedAdvanceCount >= 25) {
                     send('progress', { stage: 'done', msg: `⛔ Não foi possível avançar. ${allPages.length} páginas clonadas.`, pct: 90 });
                     break;
                 }
             } else if (pagesAfter === allPages.length || isDuplicate) {
-                // "Advanced" but no new unique page was collected — likely a false advance
                 failedAdvanceCount++;
                 console.log(`[Clone-Stream] ⚠️ Advanced but no new page collected (${failedAdvanceCount} failures)`);
-                if (failedAdvanceCount >= 25) {
+                if (failedAdvanceCount >= 30) {
                     send('progress', { stage: 'done', msg: `⛔ Quiz não avança mais. ${allPages.length} páginas clonadas.`, pct: 90 });
                     break;
                 }
             } else {
-                // Successfully advanced AND collected a new page
                 failedAdvanceCount = 0;
             }
         }
@@ -3766,96 +3858,63 @@ IMPORTANT RULES:
             }
         });
 
-        // ═══ SEND EARLY PARTIAL RESULT — so frontend has data even if connection drops ═══
-        const earlyResult = {
-            cloneSessionId,
-            quizName: welcomeData?.headline || 'Quiz Clonado',
-            niche: 'outro',
-            primaryColor: rgb2hex(quizTheme.ctaColor) || rgb2hex(quizTheme.themeColor) || '#2563eb',
-            bgColor: rgb2hex(quizTheme.bgColor) || '#ffffff',
-            titleColor: rgb2hex(quizTheme.titleColor) || '',
-            contentFont: (quizTheme.contentFont || '').split(',')[0].replace(/["']/g, '').trim() || '',
-            borderRadius: quizTheme.rounded || '',
-            welcome: {
-                headline: welcomeData?.headline || 'Quiz Clonado',
-                subheadline: welcomeData?.subheadline || '',
-                cta: welcomeData?.cta || 'Começar →',
-                logoUrl: welcomeData?.logoUrl || '',
-                heroImageUrl: welcomeData?.heroImageUrl || '',
-            },
-            pages: allPages,
-            clonedCSS: {
-                cssText: cachedCSS.cssText,
-                cssVars: cachedCSS.cssVars,
-                bodyBg: cachedCSS.bodyBg,
-                bodyColor: cachedCSS.bodyColor,
-                bodyFont: cachedCSS.bodyFont,
-            },
-            results: [
-                { id: 'r1', name: 'Resultado A', description: 'Seu perfil indica...', cta: 'Ver recomendação →', minPct: 0, maxPct: 50 },
-                { id: 'r2', name: 'Resultado B', description: 'Seu perfil indica...', cta: 'Ver recomendação →', minPct: 51, maxPct: 100 },
-            ],
-            collectLead,
-        };
-        send('progress', { stage: 'building', msg: `🧱 Montando quiz com ${allPages.length} páginas...`, pct: 92 });
-        send('result', { quiz: earlyResult });
-
-        // ═══ TRANSLATE PAGES IF LANGUAGE SELECTED ═══
+        // ═══ TRANSLATE PAGES BEFORE building result (so translations are included) ═══
         console.log(`[Clone-Stream] Translation check: targetLang="${targetLang}", OPENAI_KEY=${OPENAI_KEY ? 'SET' : 'NOT SET'}, pages=${allPages.length}`);
         if (targetLang && OPENAI_KEY) {
-            const langNames = { pt: 'Português (Brasil)', en: 'English', es: 'Español', fr: 'Français', de: 'Deutsch' };
+            const langNames = { pt: 'Português (Brasil)', en: 'English', es: 'Español', fr: 'Français', de: 'Deutsch', it: 'Italiano', nl: 'Nederlands', ja: '日本語', ko: '한국어', zh: '中文' };
             const langName = langNames[targetLang] || targetLang;
             console.log(`[Clone-Stream] 🌐 Starting translation to ${langName} for ${allPages.length} pages...`);
-            send('progress', { stage: 'translating', msg: `🌐 Traduzindo para ${langName}...`, pct: 90 });
+            send('progress', { stage: 'translating', msg: `🌐 Traduzindo para ${langName}...`, pct: 88 });
 
-            // Helper: extract visible text strings from HTML
             function extractTexts(html) {
                 const texts = [];
-                // Remove script/style content first
                 const cleaned = html.replace(/<script[\s\S]*?<\/script>/gi, '').replace(/<style[\s\S]*?<\/style>/gi, '');
-                // Match text between tags
                 const matches = cleaned.match(/>[^<]+</g) || [];
                 for (const m of matches) {
                     const t = m.slice(1, -1).trim();
-                    if (t.length >= 2 && !/^[\s\d.,;:!?@#$%^&*()+=\-_\[\]{}|\\/<>'"~`]+$/.test(t) && !/^https?:/.test(t)) {
+                    if (t.length >= 2 && !/^[\s\d.,;:!?@#$%^&*()+=\-_\[\]{}|\\/\<\>'"~`]+$/.test(t) && !/^https?:/.test(t)) {
                         texts.push(t);
                     }
                 }
-                return [...new Set(texts)]; // deduplicate
+                return [...new Set(texts)];
             }
 
-            // Helper: translate a batch of texts via OpenAI
             async function translateBatch(texts, lang) {
                 const numberedTexts = texts.map((t, i) => `[${i}] ${t}`).join('\n');
-                const aiRes = await fetch('https://api.openai.com/v1/chat/completions', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${OPENAI_KEY}` },
-                    body: JSON.stringify({
-                        model: 'gpt-4o-mini',
-                        messages: [{
-                            role: 'system',
-                            content: `You are a professional translator. Translate each numbered text to ${lang}. Keep the numbering format [0], [1], etc. Do NOT translate brand names, URLs, or email addresses. Maintain formatting. Return ONLY the numbered translations.`
-                        }, {
-                            role: 'user',
-                            content: `Translate these texts to ${lang}:\n\n${numberedTexts}`
-                        }],
-                        temperature: 0.3,
-                        max_tokens: 4000,
-                    })
-                });
-                if (!aiRes.ok) {
-                    console.log(`[Clone] Translation API error: ${aiRes.status}`);
-                    return texts; // fallback to original
+                try {
+                    const aiRes = await fetch('https://api.openai.com/v1/chat/completions', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${OPENAI_KEY}` },
+                        body: JSON.stringify({
+                            model: 'gpt-4o-mini',
+                            messages: [{
+                                role: 'system',
+                                content: `You are a professional translator. Translate each numbered text to ${lang}. Keep the numbering format [0], [1], etc. Do NOT translate brand names, URLs, or email addresses. Maintain formatting. Return ONLY the numbered translations.`
+                            }, {
+                                role: 'user',
+                                content: `Translate these texts to ${lang}:\n\n${numberedTexts}`
+                            }],
+                            temperature: 0.3,
+                            max_tokens: 4000,
+                        })
+                    });
+                    if (!aiRes.ok) {
+                        console.log(`[Clone] Translation API error: ${aiRes.status}`);
+                        return texts;
+                    }
+                    const aiData = await aiRes.json();
+                    const content = aiData.choices?.[0]?.message?.content || '';
+                    const translated = [];
+                    for (let i = 0; i < texts.length; i++) {
+                        const regex = new RegExp(`\\[${i}\\]\\s*(.+?)(?=\\n\\[\\d+\\]|$)`, 's');
+                        const match = content.match(regex);
+                        translated.push(match ? match[1].trim() : texts[i]);
+                    }
+                    return translated;
+                } catch (err) {
+                    console.log('[Clone] translateBatch error:', err.message);
+                    return texts;
                 }
-                const aiData = await aiRes.json();
-                const content = aiData.choices?.[0]?.message?.content || '';
-                const translated = [];
-                for (let i = 0; i < texts.length; i++) {
-                    const regex = new RegExp(`\\[${i}\\]\\s*(.+?)(?=\\n\\[\\d+\\]|$)`, 's');
-                    const match = content.match(regex);
-                    translated.push(match ? match[1].trim() : texts[i]);
-                }
-                return translated;
             }
 
             for (let pi = 0; pi < allPages.length; pi++) {
@@ -3866,7 +3925,6 @@ IMPORTANT RULES:
                     if (texts.length === 0) { console.log(`[Clone] Page ${pi}: no texts found`); continue; }
                     console.log(`[Clone] Page ${pi}: found ${texts.length} text strings to translate`);
 
-                    // Translate in batches of 30
                     const batchSize = 30;
                     const allTranslated = [];
                     for (let b = 0; b < texts.length; b += batchSize) {
@@ -3875,22 +3933,22 @@ IMPORTANT RULES:
                         allTranslated.push(...result);
                     }
 
-                    // Replace texts in HTML
                     let translatedCode = page.code;
+                    let translatedFull = page.fullCode || page.code;
                     for (let ti = 0; ti < texts.length; ti++) {
                         if (allTranslated[ti] && allTranslated[ti] !== texts[ti]) {
-                            // Escape regex special chars in original text
                             const escaped = texts[ti].replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
                             translatedCode = translatedCode.replace(new RegExp(`(>\\s*)${escaped}(\\s*<)`, 'g'), `$1${allTranslated[ti]}$2`);
+                            translatedFull = translatedFull.replace(new RegExp(`(>\\s*)${escaped}(\\s*<)`, 'g'), `$1${allTranslated[ti]}$2`);
                         }
                     }
                     allPages[pi].code = translatedCode;
-                    allPages[pi].fullCode = translatedCode;
+                    allPages[pi].fullCode = translatedFull;
                     console.log(`[Clone] Page ${pi} translated ✅ (${texts.length} strings)`);
                 } catch (transErr) {
                     console.log(`[Clone] Translation failed for page ${pi}:`, transErr.message);
                 }
-                send('progress', { stage: 'translating', msg: `🌐 Traduzindo página ${pi + 1}/${allPages.length}...`, pct: 90 + Math.round((pi / allPages.length) * 8) });
+                send('progress', { stage: 'translating', msg: `🌐 Traduzindo página ${pi + 1}/${allPages.length}...`, pct: 88 + Math.round((pi / allPages.length) * 8) });
             }
             // Translate welcome data
             if (welcomeData) {
