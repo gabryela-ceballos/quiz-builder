@@ -3877,25 +3877,47 @@ The viewport is 430x932 pixels (mobile). Return ONLY valid JSON.`
         // ═══ TRANSLATE PAGES BEFORE building result (so translations are included) ═══
         console.log(`[Clone-Stream] Translation check: targetLang="${targetLang}", OPENAI_KEY=${OPENAI_KEY ? 'SET' : 'NOT SET'}, pages=${allPages.length}`);
         if (targetLang && OPENAI_KEY) {
-            const langNames = { pt: 'Português (Brasil)', en: 'English', es: 'Español', fr: 'Français', de: 'Deutsch', it: 'Italiano', nl: 'Nederlands', ja: '日本語', ko: '한국어', zh: '中文' };
+            const langNames = { pt: 'Português (Brasil)', en: 'English', es: 'Español', fr: 'Français', de: 'Deutsch', it: 'Italiano', nl: 'Nederlands', ja: '日本語', ko: '한국語', zh: '中文' };
             const langName = langNames[targetLang] || targetLang;
             console.log(`[Clone-Stream] 🌐 Starting translation to ${langName} for ${allPages.length} pages...`);
             send('progress', { stage: 'translating', msg: `🌐 Traduzindo para ${langName}...`, pct: 88 });
 
+            // Extract ALL visible text strings from HTML (improved version)
             function extractTexts(html) {
                 const texts = [];
-                const cleaned = html.replace(/<script[\s\S]*?<\/script>/gi, '').replace(/<style[\s\S]*?<\/style>/gi, '');
-                const matches = cleaned.match(/>[^<]+</g) || [];
-                for (const m of matches) {
+                // Remove script/style content
+                const cleaned = html
+                    .replace(/<script[\s\S]*?<\/script>/gi, '')
+                    .replace(/<style[\s\S]*?<\/style>/gi, '')
+                    .replace(/<!--[\s\S]*?-->/g, '');
+                
+                // Method 1: Text between tags (most reliable for simple text)
+                const tagMatches = cleaned.match(/>[^<]+</g) || [];
+                for (const m of tagMatches) {
                     const t = m.slice(1, -1).trim();
-                    if (t.length >= 2 && !/^[\s\d.,;:!?@#$%^&*()+=\-_\[\]{}|\\/\<\>'"~`]+$/.test(t) && !/^https?:/.test(t)) {
+                    if (t.length >= 2 && t.length <= 500 &&
+                        !/^[\s\d.,;:!?@#$%^&*()+=\-_\[\]{}|\\/'"~`¿¡°•→←↑↓]+$/.test(t) &&
+                        !/^https?:/.test(t) &&
+                        !/^[a-f0-9-]{20,}$/i.test(t) &&  // Skip UUIDs/hashes
+                        !/^(rgb|hsl|#[a-f0-9]+|var\()/i.test(t)) {  // Skip CSS values
                         texts.push(t);
                     }
                 }
-                return [...new Set(texts)];
+
+                // Method 2: Also extract text from attributes (alt, title, placeholder, aria-label)
+                const attrMatches = cleaned.match(/(?:alt|title|placeholder|aria-label)\s*=\s*"([^"]+)"/gi) || [];
+                for (const m of attrMatches) {
+                    const valMatch = m.match(/=\s*"([^"]+)"/);
+                    if (valMatch && valMatch[1].trim().length >= 3) {
+                        texts.push(valMatch[1].trim());
+                    }
+                }
+
+                return [...new Set(texts)]; // deduplicate
             }
 
             async function translateBatch(texts, lang) {
+                if (!texts.length) return texts;
                 const numberedTexts = texts.map((t, i) => `[${i}] ${t}`).join('\n');
                 try {
                     const aiRes = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -3905,21 +3927,24 @@ The viewport is 430x932 pixels (mobile). Return ONLY valid JSON.`
                             model: 'gpt-4o-mini',
                             messages: [{
                                 role: 'system',
-                                content: `You are a professional translator. Translate each numbered text to ${lang}. Keep the numbering format [0], [1], etc. Do NOT translate brand names, URLs, or email addresses. Maintain formatting. Return ONLY the numbered translations.`
+                                content: `You are a professional translator. Translate EVERY numbered text to ${lang}. Keep the numbering format [0], [1], etc. Do NOT translate brand names, URLs, or email addresses. Maintain formatting and special characters. Return ONLY the numbered translations, one per line.`
                             }, {
                                 role: 'user',
-                                content: `Translate these texts to ${lang}:\n\n${numberedTexts}`
+                                content: `Translate ALL these texts to ${lang}:\n\n${numberedTexts}`
                             }],
                             temperature: 0.3,
                             max_tokens: 4000,
                         })
                     });
                     if (!aiRes.ok) {
-                        console.log(`[Clone] Translation API error: ${aiRes.status}`);
+                        const errBody = await aiRes.text().catch(() => '');
+                        console.log(`[Clone] Translation API error: ${aiRes.status} - ${errBody.slice(0, 200)}`);
                         return texts;
                     }
                     const aiData = await aiRes.json();
                     const content = aiData.choices?.[0]?.message?.content || '';
+                    console.log(`[Clone] AI response length: ${content.length} chars`);
+                    
                     const translated = [];
                     for (let i = 0; i < texts.length; i++) {
                         const regex = new RegExp(`\\[${i}\\]\\s*(.+?)(?=\\n\\[\\d+\\]|$)`, 's');
@@ -3933,15 +3958,17 @@ The viewport is 430x932 pixels (mobile). Return ONLY valid JSON.`
                 }
             }
 
+            let totalTranslated = 0;
             for (let pi = 0; pi < allPages.length; pi++) {
                 const page = allPages[pi];
-                if (!page.code || page.code.length < 20) continue;
+                const sourceHtml = page.fullCode || page.code || '';
+                if (sourceHtml.length < 30) continue;
                 try {
-                    const texts = extractTexts(page.code);
+                    const texts = extractTexts(sourceHtml);
                     if (texts.length === 0) { console.log(`[Clone] Page ${pi}: no texts found`); continue; }
                     console.log(`[Clone] Page ${pi}: found ${texts.length} text strings to translate`);
 
-                    const batchSize = 30;
+                    const batchSize = 25;
                     const allTranslated = [];
                     for (let b = 0; b < texts.length; b += batchSize) {
                         const batch = texts.slice(b, b + batchSize);
@@ -3949,18 +3976,29 @@ The viewport is 430x932 pixels (mobile). Return ONLY valid JSON.`
                         allTranslated.push(...result);
                     }
 
-                    let translatedCode = page.code;
-                    let translatedFull = page.fullCode || page.code;
+                    // Apply translations using BOTH regex and plain string replace
+                    let translatedCode = page.code || '';
+                    let translatedFull = page.fullCode || page.code || '';
+                    let appliedCount = 0;
                     for (let ti = 0; ti < texts.length; ti++) {
                         if (allTranslated[ti] && allTranslated[ti] !== texts[ti]) {
-                            const escaped = texts[ti].replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-                            translatedCode = translatedCode.replace(new RegExp(`(>\\s*)${escaped}(\\s*<)`, 'g'), `$1${allTranslated[ti]}$2`);
-                            translatedFull = translatedFull.replace(new RegExp(`(>\\s*)${escaped}(\\s*<)`, 'g'), `$1${allTranslated[ti]}$2`);
+                            const original = texts[ti];
+                            const translated = allTranslated[ti];
+
+                            // Method 1: Direct string replace (handles most cases)
+                            if (translatedCode.includes(original)) {
+                                translatedCode = translatedCode.split(original).join(translated);
+                                appliedCount++;
+                            }
+                            if (translatedFull.includes(original)) {
+                                translatedFull = translatedFull.split(original).join(translated);
+                            }
                         }
                     }
                     allPages[pi].code = translatedCode;
                     allPages[pi].fullCode = translatedFull;
-                    console.log(`[Clone] Page ${pi} translated ✅ (${texts.length} strings)`);
+                    totalTranslated += appliedCount;
+                    console.log(`[Clone] Page ${pi} translated ✅ (${appliedCount}/${texts.length} strings applied)`);
                 } catch (transErr) {
                     console.log(`[Clone] Translation failed for page ${pi}:`, transErr.message);
                 }
@@ -3979,6 +4017,8 @@ The viewport is 430x932 pixels (mobile). Return ONLY valid JSON.`
                     }
                 } catch {}
             }
+            console.log(`[Clone-Stream] 🌐 Translation complete! ${totalTranslated} strings applied across ${allPages.length} pages`);
+            send('progress', { stage: 'translating', msg: `🌐 Tradução concluída! (${totalTranslated} textos)`, pct: 96 });
         }
 
         const quizResult = {
