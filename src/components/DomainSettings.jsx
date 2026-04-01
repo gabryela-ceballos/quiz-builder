@@ -24,11 +24,14 @@ export default function DomainSettings({ quizId }) {
         { name: 'Cloudflare', emoji: '🟡', color: '#F48120', searchUrl: (d) => `https://www.cloudflare.com/products/registrar/`, desc: 'Preço de custo, sem markup' },
     ];
 
+    // Always load server hostname (needed for instructions)
     useEffect(() => {
-        if (quizId) {
-            loadDomains();
-            getServerInfo().then(info => setServerHostname(info.hostname || 'seu-servidor.com'));
-        }
+        getServerInfo().then(info => setServerHostname(info.hostname || 'quizflw.com'));
+    }, []);
+
+    // Load domains when quizId is available
+    useEffect(() => {
+        if (quizId) loadDomains();
     }, [quizId]);
 
     const loadDomains = async () => { const data = await getDomains(quizId); setDomains(data); };
