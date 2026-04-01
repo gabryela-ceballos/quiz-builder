@@ -35,16 +35,17 @@ export default function DomainSettings({ quizId }) {
     const loadDomains = async () => {
         const data = await getDomains(quizId);
         setDomains(data);
-        // Auto-sync DNS records from Railway for ALL domains that don't have records
+        // ALWAYS sync ALL domains from Railway to get fresh TXT records
+        let needsRefresh = false;
         for (const d of data) {
-            if (!d.dnsRecords || d.dnsRecords.length === 0) {
+            try {
                 const result = await syncDomainDns(d.id);
-                if (result.dnsRecords) {
-                    const updated = await getDomains(quizId);
-                    setDomains(updated);
-                    break;
-                }
-            }
+                if (result.dnsRecords) needsRefresh = true;
+            } catch {}
+        }
+        if (needsRefresh) {
+            const updated = await getDomains(quizId);
+            setDomains(updated);
         }
     };
 
@@ -77,26 +78,24 @@ export default function DomainSettings({ quizId }) {
         } else {
             setError(result.message);
         }
-        // Always expand to show DNS records (including TXT)
         setExpandedDomain(id);
         await loadDomains();
     };
 
-    // When expanding, force sync if no DNS records
+    // ALWAYS sync when expanding - gets fresh data from Railway
     const handleExpand = async (id) => {
         if (expandedDomain === id) {
             setExpandedDomain(null);
             return;
         }
         setExpandedDomain(id);
-        const domain = domains.find(d => d.id === id);
-        if (domain && (!domain.dnsRecords || domain.dnsRecords.length === 0)) {
+        try {
             const result = await syncDomainDns(id);
             if (result.dnsRecords) {
                 const updated = await getDomains(quizId);
                 setDomains(updated);
             }
-        }
+        } catch {}
     };
 
     const copyText = (text, key) => { navigator.clipboard.writeText(text); setCopied(key); setTimeout(() => setCopied(''), 2000); };
