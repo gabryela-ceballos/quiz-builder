@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Globe, Trash2, RefreshCw, Check, AlertCircle, Copy, ExternalLink, Loader2, Plus, Info, ChevronDown, ChevronUp } from 'lucide-react';
-import { getDomains, addDomain, removeDomain, verifyDomain, getServerInfo } from '../hooks/useQuizStore';
+import { getDomains, addDomain, removeDomain, verifyDomain, syncDomainDns, getServerInfo } from '../hooks/useQuizStore';
 
 export default function DomainSettings({ quizId }) {
     const [domains, setDomains] = useState([]);
@@ -32,7 +32,22 @@ export default function DomainSettings({ quizId }) {
         if (quizId) loadDomains();
     }, [quizId]);
 
-    const loadDomains = async () => { const data = await getDomains(quizId); setDomains(data); };
+    const loadDomains = async () => {
+        const data = await getDomains(quizId);
+        setDomains(data);
+        // Auto-sync DNS records from Railway for domains that don't have them yet
+        for (const d of data) {
+            if (!d.dnsRecords && d.status !== 'verified') {
+                const result = await syncDomainDns(d.id);
+                if (result.dnsRecords) {
+                    // Refresh to show the new records
+                    const updated = await getDomains(quizId);
+                    setDomains(updated);
+                    break; // Refresh once is enough
+                }
+            }
+        }
+    };
 
     const handleAdd = async () => {
         if (!newDomain.trim()) return;
@@ -58,8 +73,13 @@ export default function DomainSettings({ quizId }) {
         setVerifying(id); setError(''); setSuccess('');
         const result = await verifyDomain(id);
         setVerifying(null);
-        if (result.status === 'verified') setSuccess(result.message);
-        else setError(result.message);
+        if (result.status === 'verified') {
+            setSuccess(result.message);
+        } else {
+            setError(result.message);
+            // Show DNS records panel if not verified
+            setExpandedDomain(id);
+        }
         await loadDomains();
     };
 

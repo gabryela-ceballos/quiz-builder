@@ -187,6 +187,15 @@ export async function verifyDomain(id) {
     }
 }
 
+export async function syncDomainDns(id) {
+    try {
+        const res = await fetch(`${API}/domains/${id}/sync`, { method: 'POST' });
+        return await res.json();
+    } catch (e) {
+        return { ok: false, dnsRecords: null };
+    }
+}
+
 export async function getServerInfo() {
     try {
         const res = await fetch(`${API}/server-info`);
