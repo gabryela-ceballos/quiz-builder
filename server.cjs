@@ -655,9 +655,10 @@ app.post('/api/domains/:id/verify', async (req, res) => {
             db.prepare('UPDATE domains SET railway_dns = ? WHERE id = ?').run(JSON.stringify(dnsRecords), row.id);
         }
 
-        // Check if Railway considers all DNS records verified
+        // Check if Railway considers all DNS records verified (Railway uses DNS_RECORD_STATUS_PROPAGATED)
+        const isRailwayRecordOk = (s) => s && (s.toUpperCase().includes('VERIFIED') || s.toUpperCase().includes('VALID') || s.toUpperCase().includes('PROPAGATED'));
         const railwayVerified = dnsRecords && dnsRecords.length > 0 && 
-            dnsRecords.every(r => r.status === 'VERIFIED' || r.status === 'verified' || r.status === 'VALID');
+            dnsRecords.every(r => isRailwayRecordOk(r.status));
 
         // Our own DNS check - multiple methods
         const serverHost = SERVER_HOSTNAME.split(':')[0].toLowerCase();

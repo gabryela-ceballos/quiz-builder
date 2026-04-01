@@ -116,10 +116,20 @@ export default function DomainSettings({ quizId }) {
     // Render DNS records table for a domain
     const renderDnsRecords = (domain) => {
         const records = domain.dnsRecords || [];
+        
+        // Status helpers - Railway uses DNS_RECORD_STATUS_PROPAGATED and other formats
+        const isRecordVerified = (status) => {
+            if (!status) return false;
+            const s = status.toUpperCase();
+            return s.includes('VERIFIED') || s.includes('VALID') || s.includes('PROPAGATED');
+        };
+        
         // Find TXT record from Railway (if available)
         const txtRecord = records.find(r => !r.requiredValue?.includes('.railway.app') && !r.requiredValue?.includes('.up.'));
-        const cnameVerified = records.some(r => (r.requiredValue?.includes('.railway.app') || r.requiredValue?.includes('.up.')) && (r.status === 'VERIFIED' || r.status === 'verified' || r.status === 'VALID'));
-        const txtVerified = txtRecord && (txtRecord.status === 'VERIFIED' || txtRecord.status === 'verified' || txtRecord.status === 'VALID');
+        // Find CNAME record from Railway
+        const cnameRecord = records.find(r => r.requiredValue?.includes('.railway.app') || r.requiredValue?.includes('.up.'));
+        const cnameVerified = cnameRecord && isRecordVerified(cnameRecord.status);
+        const txtVerified = txtRecord && isRecordVerified(txtRecord.status);
 
         return (
             <div style={{ padding: '12px 14px', borderRadius: 10, background: '#f8fafc', border: '1px solid var(--border)', fontSize: '0.82rem' }}>
@@ -132,7 +142,7 @@ export default function DomainSettings({ quizId }) {
                     <span style={{ fontWeight: 700, fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Valor</span>
                     <span></span>
 
-                    {/* Step 1: CNAME always pointing to quizflw.com */}
+                    {/* Step 1: CNAME pointing to quizflw.com */}
                     <span style={{ fontFamily: 'monospace', fontSize: '0.8rem', fontWeight: 600, color: cnameVerified ? '#059669' : '#d97706' }}>CNAME</span>
                     <span style={{ fontFamily: 'monospace', fontSize: '0.8rem' }}>@</span>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
@@ -143,7 +153,7 @@ export default function DomainSettings({ quizId }) {
                         {copied === `cname-${domain.id}` ? <Check size={14} /> : <Copy size={14} />}
                     </button>
 
-                    {/* Step 2: TXT record from Railway (if available) */}
+                    {/* Step 2: TXT record from Railway */}
                     {txtRecord && (
                         <>
                             <span style={{ fontFamily: 'monospace', fontSize: '0.8rem', fontWeight: 600, color: txtVerified ? '#059669' : '#d97706' }}>TXT</span>
@@ -159,10 +169,14 @@ export default function DomainSettings({ quizId }) {
                     )}
                 </div>
 
-                {/* Hint about TXT appearing after CNAME */}
+                {/* When TXT not returned by API - show instructions */}
                 {!txtRecord && (
-                    <div style={{ marginTop: 10, padding: '8px 12px', borderRadius: 8, background: 'rgba(99,102,241,0.05)', border: '1px solid rgba(99,102,241,0.12)', fontSize: '0.72rem', color: '#4338ca' }}>
-                        💡 Configure o CNAME acima e clique em <strong>"Verificar"</strong>. O registro TXT de verificação aparecerá automaticamente.
+                    <div style={{ marginTop: 10, padding: '10px 12px', borderRadius: 8, background: '#fffbeb', border: '1px solid #fde68a', fontSize: '0.75rem', color: '#92400e', lineHeight: 1.6 }}>
+                        <strong>⚠️ Registro TXT necessário:</strong> O registro TXT de verificação está disponível no painel do Railway.
+                        <br />
+                        Acesse: <a href="https://railway.com/project" target="_blank" rel="noopener noreferrer" style={{ color: '#4338ca', fontWeight: 600 }}>
+                            Railway Dashboard → Settings → Networking
+                        </a> → clique em <strong>"Show DNS records"</strong> no domínio <strong>{domain.domain}</strong> → copie o valor do TXT <code style={{ background: '#f3f4f6', padding: '1px 4px', borderRadius: 3 }}>_railway-verify</code> e adicione no DNS do seu registrador.
                     </div>
                 )}
 
