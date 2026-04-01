@@ -791,6 +791,58 @@ app.get('/api/server-info', (req, res) => {
     });
 });
 
+// Debug endpoint to see raw Railway API response
+app.get('/api/railway-debug', async (req, res) => {
+    if (!RAILWAY_API_TOKEN || !RAILWAY_SERVICE_ID || !RAILWAY_ENVIRONMENT_ID || !RAILWAY_PROJECT_ID) {
+        return res.json({ error: 'Railway not configured' });
+    }
+    const headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${RAILWAY_API_TOKEN}` };
+    try {
+        const r = await fetch(RAILWAY_API_URL, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+                query: `query domains($projectId: String!, $environmentId: String!, $serviceId: String!) {
+                    domains(projectId: $projectId, environmentId: $environmentId, serviceId: $serviceId) {
+                        customDomains {
+                            id
+                            domain
+                            createdAt
+                            updatedAt
+                            status {
+                                certificateStatus
+                                dnsRecords {
+                                    hostlabel
+                                    requiredValue
+                                    currentValue
+                                    zone
+                                    status
+                                    purpose
+                                }
+                            }
+                        }
+                        serviceDomains {
+                            id
+                            domain
+                            suffix
+                            targetPort
+                        }
+                    }
+                }`,
+                variables: {
+                    projectId: RAILWAY_PROJECT_ID,
+                    environmentId: RAILWAY_ENVIRONMENT_ID,
+                    serviceId: RAILWAY_SERVICE_ID,
+                }
+            }),
+        });
+        const data = await r.json();
+        res.json(data);
+    } catch (err) {
+        res.json({ error: err.message });
+    }
+});
+
 // ── Leads ──
 app.post('/api/leads', (req, res) => {
     const { quizId, ...leadData } = req.body;
