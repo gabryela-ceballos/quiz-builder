@@ -3699,30 +3699,42 @@ IMPORTANT RULES:
                 }
             }
 
-            // ── Detect FINAL page (result/checkout/thank-you) — capture and stop gracefully ──
+            // ── Detect FINAL page (checkout/sales/external-redirect) — CONSERVATIVE ──
+            // Only trigger when: page has NO quiz-like interactive elements AND
+            // has checkout/payment indicators. This prevents false positives on
+            // quiz pages that mention "plan", "resultado", etc.
             const isFinalPage = await pg.evaluate(() => {
                 const text = (document.body.innerText || '').toLowerCase();
                 const url = window.location.href.toLowerCase();
-                const finalPatterns = [
-                    /su\s*plan|your\s*plan|tu\s*plan/,
-                    /resultado|result|resultado\s*personalizado/,
-                    /checkout|payment|pagar|comprar|buy\s*now/,
-                    /obrigad[oa]|thank\s*you|gracias|merci/,
-                    /order\s*complete|pedido\s*realizado/,
-                    /congratulat|parab[eé]ns|felicidad/,
-                    /add\s*to\s*cart|a[ñn]adir.*carrito|adicionar.*carrinho/,
-                ];
-                const urlFinal = /checkout|thank|result|success|complete|order|cart|payment/.test(url);
-                const textFinal = finalPatterns.some(p => p.test(text));
-                // Also check for CTA buttons that link to external sites (checkout/sales page)
-                const externalCTA = [...document.querySelectorAll('a[href]')].some(a => {
-                    const href = a.href || '';
-                    return /checkout|cart|pay|comprar|buy|order/.test(href) && !href.includes(window.location.hostname);
+                
+                // Check if page still has quiz-like interactive elements (options, buttons)
+                const hasOptions = document.querySelectorAll('[role="option"], [role="radio"], [role="checkbox"], input[type="radio"], input[type="checkbox"]').length > 0;
+                const quizButtons = [...document.querySelectorAll('button, [role="button"]')].filter(el => {
+                    const r = el.getBoundingClientRect();
+                    if (r.height < 20 || r.width < 40 || r.top > 1200 || r.top < 0) return false;
+                    const t = (el.innerText || '').trim();
+                    return t.length > 2 && t.length < 100 && !el.disabled;
                 });
-                return textFinal || urlFinal || externalCTA;
+                const hasQuizNav = hasOptions || quizButtons.length >= 2;
+                
+                // If page still has interactive quiz elements, it's NOT final
+                if (hasQuizNav) return false;
+                
+                // Only consider these as final if NO quiz navigation exists:
+                // 1. URL indicates checkout/payment
+                const urlIsFinal = /checkout|payment|order|cart|thank-you|thankyou|success/.test(url);
+                // 2. External buy/checkout links present
+                const hasExternalBuy = [...document.querySelectorAll('a[href]')].some(a => {
+                    const href = a.href || '';
+                    return /checkout|cart|pay\b|comprar|buy|order|purchase/.test(href) && !href.includes(window.location.hostname);
+                });
+                // 3. Thank-you / order complete text (very specific, full phrases only)
+                const hasThankYou = /thank you for your (order|purchase)|pedido realizado|obrigad[oa] pela compra|gracias por (tu|su) (compra|pedido)/.test(text);
+                
+                return urlIsFinal || hasExternalBuy || hasThankYou;
             }).catch(() => false);
 
-            if (isFinalPage && allPages.length >= 3) {
+            if (isFinalPage && allPages.length >= 8) {
                 console.log(`[Clone-Stream] 🏁 FINAL PAGE detected! Stopping gracefully with ${allPages.length} pages.`);
                 send('progress', { stage: 'done', msg: `🏁 Última página do quiz detectada! ${allPages.length} páginas clonadas.`, pct: 95 });
                 break;
@@ -3749,9 +3761,13 @@ IMPORTANT RULES:
                                 model: 'gpt-4o',
                                 messages: [{
                                     role: 'system',
-                                    content: `You are a bot navigating a quiz/funnel. Look at this screenshot and determine:
-1. Is this the FINAL page of the quiz (result page, checkout, thank you, sales page)? If yes, return {"final": true}
-2. If not final, what element should I click to advance to the next page? Return the approximate coordinates as {"final": false, "click": {"x": <number>, "y": <number>, "description": "<what to click>"}}
+                                    content: `You are a bot navigating a multi-page quiz/funnel. Look at this screenshot and determine what to click to go to the NEXT page.
+
+IMPORTANT: A quiz typically has 15-40 pages. Pages with questions, options, buttons like "Continue/Next/Siguiente" are NOT final pages. Only a payment/checkout page with actual purchase buttons or an order confirmation is truly final.
+
+If you see a clickable element (button, option, link) that would advance to the next question or page, return: {"final": false, "click": {"x": <number>, "y": <number>, "description": "<what to click>"}}
+
+Only if the page is truly a payment/checkout/order confirmation with NO quiz questions, return: {"final": true}
 
 The viewport is 430x932 pixels (mobile). Return ONLY valid JSON.`
                                 }, {
