@@ -950,17 +950,20 @@ app.get('/api/shared-quizzes/:email', (req, res) => {
 const OPENAI_URL = 'https://api.openai.com/v1/chat/completions';
 
 // Read API key from env vars (Railway) or .env file (local)
-let OPENAI_KEY = process.env.VITE_OPENAI_API_KEY || '';
+// Check multiple possible env var names
+let OPENAI_KEY = process.env.VITE_OPENAI_API_KEY || process.env.OPENAI_KEY || process.env.OPENAI_API_KEY || '';
 if (!OPENAI_KEY) {
     try {
         const envPath = path.join(__dirname, '.env');
         if (fs.existsSync(envPath)) {
             const envContent = fs.readFileSync(envPath, 'utf8');
-            const match = envContent.match(/VITE_OPENAI_API_KEY=(.+)/);
+            const match = envContent.match(/(?:VITE_OPENAI_API_KEY|OPENAI_KEY|OPENAI_API_KEY)=(.+)/);
             if (match) OPENAI_KEY = match[1].trim();
         }
     } catch (e) { console.warn('Could not read .env:', e.message); }
 }
+console.log(`[Server] OpenAI Key: ${OPENAI_KEY ? `SET (${OPENAI_KEY.slice(0, 8)}...${OPENAI_KEY.slice(-4)})` : '⚠️ NOT SET — translation will NOT work!'}`);
+console.log(`[Server] Env vars checked: VITE_OPENAI_API_KEY=${process.env.VITE_OPENAI_API_KEY ? 'SET' : 'UNSET'}, OPENAI_KEY=${process.env.OPENAI_KEY ? 'SET' : 'UNSET'}, OPENAI_API_KEY=${process.env.OPENAI_API_KEY ? 'SET' : 'UNSET'}`);
 
 async function callOpenAI(prompt, { system = '', temperature = 0.7, maxTokens = 4000 } = {}) {
     if (!OPENAI_KEY) throw new Error('API key não configurada');
@@ -1550,6 +1553,21 @@ Você DEVE criar quizzes que sigam uma jornada lógica e narrativa:
         console.error('[AI] ❌ Erro:', err.message);
         res.status(500).json({ error: err.message });
     }
+});
+
+// ═══ DIAGNOSTIC ENDPOINT ═══
+app.get('/api/diag', (req, res) => {
+    res.json({
+        openaiKey: OPENAI_KEY ? `SET (${OPENAI_KEY.slice(0, 8)}...${OPENAI_KEY.slice(-4)})` : 'NOT SET',
+        envVars: {
+            VITE_OPENAI_API_KEY: process.env.VITE_OPENAI_API_KEY ? 'SET' : 'UNSET',
+            OPENAI_KEY: process.env.OPENAI_KEY ? 'SET' : 'UNSET',
+            OPENAI_API_KEY: process.env.OPENAI_API_KEY ? 'SET' : 'UNSET',
+        },
+        puppeteer: process.env.PUPPETEER_EXECUTABLE_PATH || 'default',
+        nodeEnv: process.env.NODE_ENV || 'unset',
+        activeJobs: typeof cloneJobs !== 'undefined' ? cloneJobs.size : 'N/A',
+    });
 });
 
 // ═══ JOB-BASED CLONE SYSTEM (survives standby/disconnect) ═══
