@@ -35,15 +35,14 @@ export default function DomainSettings({ quizId }) {
     const loadDomains = async () => {
         const data = await getDomains(quizId);
         setDomains(data);
-        // Auto-sync DNS records from Railway for domains that don't have them yet
+        // Auto-sync DNS records from Railway for ALL domains that don't have records
         for (const d of data) {
-            if (!d.dnsRecords && d.status !== 'verified') {
+            if (!d.dnsRecords || d.dnsRecords.length === 0) {
                 const result = await syncDomainDns(d.id);
                 if (result.dnsRecords) {
-                    // Refresh to show the new records
                     const updated = await getDomains(quizId);
                     setDomains(updated);
-                    break; // Refresh once is enough
+                    break;
                 }
             }
         }
@@ -77,10 +76,27 @@ export default function DomainSettings({ quizId }) {
             setSuccess(result.message);
         } else {
             setError(result.message);
-            // Show DNS records panel if not verified
-            setExpandedDomain(id);
         }
+        // Always expand to show DNS records (including TXT)
+        setExpandedDomain(id);
         await loadDomains();
+    };
+
+    // When expanding, force sync if no DNS records
+    const handleExpand = async (id) => {
+        if (expandedDomain === id) {
+            setExpandedDomain(null);
+            return;
+        }
+        setExpandedDomain(id);
+        const domain = domains.find(d => d.id === id);
+        if (domain && (!domain.dnsRecords || domain.dnsRecords.length === 0)) {
+            const result = await syncDomainDns(id);
+            if (result.dnsRecords) {
+                const updated = await getDomains(quizId);
+                setDomains(updated);
+            }
+        }
     };
 
     const copyText = (text, key) => { navigator.clipboard.writeText(text); setCopied(key); setTimeout(() => setCopied(''), 2000); };
@@ -281,7 +297,7 @@ export default function DomainSettings({ quizId }) {
                                         </div>
                                         {statusBadge(d.status)}
                                         <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
-                                            <button onClick={() => setExpandedDomain(isExpanded ? null : d.id)} title="Ver registros DNS"
+                                            <button onClick={() => handleExpand(d.id)} title="Ver registros DNS"
                                                 style={{ width: 30, height: 30, borderRadius: 8, background: 'rgba(99,102,241,0.08)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#6366f1', transition: 'var(--transition)' }}>
                                                 {isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
                                             </button>
