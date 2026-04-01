@@ -124,8 +124,11 @@ export default function DomainSettings({ quizId }) {
             return s.includes('VERIFIED') || s.includes('VALID') || s.includes('PROPAGATED');
         };
         
-        // Find TXT record from Railway (if available)
-        const txtRecord = records.find(r => !r.requiredValue?.includes('.railway.app') && !r.requiredValue?.includes('.up.'));
+        // Find TXT record (verification purpose or non-CNAME)
+        const txtRecord = records.find(r => 
+            r.purpose?.includes('VERIFICATION') || 
+            (!r.requiredValue?.includes('.railway.app') && !r.requiredValue?.includes('.up.') && r.requiredValue)
+        );
         // Find CNAME record from Railway
         const cnameRecord = records.find(r => r.requiredValue?.includes('.railway.app') || r.requiredValue?.includes('.up.'));
         const cnameVerified = cnameRecord && isRecordVerified(cnameRecord.status);
@@ -153,7 +156,7 @@ export default function DomainSettings({ quizId }) {
                         {copied === `cname-${domain.id}` ? <Check size={14} /> : <Copy size={14} />}
                     </button>
 
-                    {/* Step 2: TXT record from Railway */}
+                    {/* Step 2: TXT verification record */}
                     {txtRecord && (
                         <>
                             <span style={{ fontFamily: 'monospace', fontSize: '0.8rem', fontWeight: 600, color: txtVerified ? '#059669' : '#d97706' }}>TXT</span>
@@ -169,14 +172,10 @@ export default function DomainSettings({ quizId }) {
                     )}
                 </div>
 
-                {/* When TXT not returned by API - show instructions */}
+                {/* Hint when TXT not yet available */}
                 {!txtRecord && (
-                    <div style={{ marginTop: 10, padding: '10px 12px', borderRadius: 8, background: '#fffbeb', border: '1px solid #fde68a', fontSize: '0.75rem', color: '#92400e', lineHeight: 1.6 }}>
-                        <strong>⚠️ Registro TXT necessário:</strong> O registro TXT de verificação está disponível no painel do Railway.
-                        <br />
-                        Acesse: <a href="https://railway.com/project" target="_blank" rel="noopener noreferrer" style={{ color: '#4338ca', fontWeight: 600 }}>
-                            Railway Dashboard → Settings → Networking
-                        </a> → clique em <strong>"Show DNS records"</strong> no domínio <strong>{domain.domain}</strong> → copie o valor do TXT <code style={{ background: '#f3f4f6', padding: '1px 4px', borderRadius: 3 }}>_railway-verify</code> e adicione no DNS do seu registrador.
+                    <div style={{ marginTop: 10, padding: '8px 12px', borderRadius: 8, background: 'rgba(99,102,241,0.05)', border: '1px solid rgba(99,102,241,0.12)', fontSize: '0.72rem', color: '#4338ca' }}>
+                        💡 Configure o CNAME e clique em <strong>"Verificar"</strong>. O registro TXT aparecerá automaticamente.
                     </div>
                 )}
 

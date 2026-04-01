@@ -530,11 +530,16 @@ async function fetchRailwayDnsRecords(targetDomain) {
                             id
                             domain
                             status {
+                                certificateStatus
+                                verified
+                                verificationDnsHost
+                                verificationToken
                                 dnsRecords {
                                     hostlabel
                                     requiredValue
                                     currentValue
                                     status
+                                    purpose
                                 }
                             }
                         }
@@ -554,8 +559,26 @@ async function fetchRailwayDnsRecords(targetDomain) {
         if (targetDomain) {
             const match = customDomains.find(d => d.domain.toLowerCase() === targetDomain.toLowerCase());
             if (match) {
-                console.log(`[Railway] ✅ Found DNS records for ${targetDomain}:`, JSON.stringify(match.status?.dnsRecords, null, 2));
-                return match.status?.dnsRecords || null;
+                // Combine dnsRecords with verification TXT record
+                let allRecords = [...(match.status?.dnsRecords || [])];
+                
+                // Add TXT verification record if available
+                if (match.status?.verificationToken) {
+                    const txtHost = match.status.verificationDnsHost || '_railway-verify';
+                    const alreadyHasTxt = allRecords.some(r => r.requiredValue === match.status.verificationToken);
+                    if (!alreadyHasTxt) {
+                        allRecords.push({
+                            hostlabel: txtHost,
+                            requiredValue: match.status.verificationToken,
+                            currentValue: '',
+                            status: match.status.verified ? 'DNS_RECORD_STATUS_PROPAGATED' : 'PENDING',
+                            purpose: 'DNS_RECORD_PURPOSE_VERIFICATION',
+                        });
+                    }
+                }
+                
+                console.log(`[Railway] ✅ Found ${allRecords.length} DNS records for ${targetDomain}:`, JSON.stringify(allRecords, null, 2));
+                return allRecords.length > 0 ? allRecords : null;
             }
             console.log(`[Railway] ⚠️ Domain ${targetDomain} not found in Railway domains`);
             return null;
@@ -593,11 +616,16 @@ async function registerDomainOnRailway(domain) {
                         id
                         domain
                         status {
+                            certificateStatus
+                            verified
+                            verificationDnsHost
+                            verificationToken
                             dnsRecords {
                                 hostlabel
                                 requiredValue
                                 currentValue
                                 status
+                                purpose
                             }
                         }
                     }
