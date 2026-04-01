@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Globe, Trash2, RefreshCw, Check, AlertCircle, Copy, ExternalLink, Loader2, Plus, Info } from 'lucide-react';
+import { Globe, Trash2, RefreshCw, Check, AlertCircle, Copy, ExternalLink, Loader2, Plus, Info, ChevronDown, ChevronUp } from 'lucide-react';
 import { getDomains, addDomain, removeDomain, verifyDomain, getServerInfo } from '../hooks/useQuizStore';
 
 export default function DomainSettings({ quizId }) {
@@ -10,12 +10,12 @@ export default function DomainSettings({ quizId }) {
     const [error, setError] = useState('');
     const [success, setSuccess] = useState('');
     const [serverHostname, setServerHostname] = useState('');
-    const [showInstructions, setShowInstructions] = useState(false);
-    const [copied, setCopied] = useState(false);
+    const [copied, setCopied] = useState('');
     const [searchDomain, setSearchDomain] = useState('');
     const [showBuySection, setShowBuySection] = useState(true);
+    const [expandedDomain, setExpandedDomain] = useState(null);
 
-    // Affiliate registrar links (replace URLs with your affiliate links)
+    // Affiliate registrar links
     const REGISTRARS = [
         { name: 'Namecheap', emoji: '🟠', color: '#FF5722', searchUrl: (d) => `https://www.namecheap.com/domains/registration/results/?domain=${d}`, desc: 'Preços baixos, SSL grátis', popular: true },
         { name: 'GoDaddy', emoji: '🟢', color: '#00A4A6', searchUrl: (d) => `https://www.godaddy.com/domainsearch/find?domainToCheck=${d}`, desc: 'Mais popular do mundo' },
@@ -24,12 +24,10 @@ export default function DomainSettings({ quizId }) {
         { name: 'Cloudflare', emoji: '🟡', color: '#F48120', searchUrl: (d) => `https://www.cloudflare.com/products/registrar/`, desc: 'Preço de custo, sem markup' },
     ];
 
-    // Always load server hostname (needed for instructions)
     useEffect(() => {
         getServerInfo().then(info => setServerHostname(info.hostname || 'quizflw.com'));
     }, []);
 
-    // Load domains when quizId is available
     useEffect(() => {
         if (quizId) loadDomains();
     }, [quizId]);
@@ -42,7 +40,16 @@ export default function DomainSettings({ quizId }) {
         const result = await addDomain(quizId, newDomain.trim());
         setLoading(false);
         if (result.error) { setError(result.error); }
-        else { setSuccess('Domínio adicionado! Configure o CNAME e depois clique em "Verificar DNS".'); setNewDomain(''); setShowInstructions(true); await loadDomains(); }
+        else {
+            if (result.dnsRecords) {
+                setSuccess('Domínio registrado! Configure os registros DNS abaixo e clique em "Verificar".');
+            } else {
+                setSuccess('Domínio adicionado! Configure o CNAME e depois clique em "Verificar DNS".');
+            }
+            setNewDomain('');
+            setExpandedDomain(result.id);
+            await loadDomains();
+        }
     };
 
     const handleRemove = async (id) => { if (!confirm('Remover este domínio?')) return; await removeDomain(id); await loadDomains(); };
@@ -56,7 +63,7 @@ export default function DomainSettings({ quizId }) {
         await loadDomains();
     };
 
-    const copyHostname = () => { navigator.clipboard.writeText(serverHostname); setCopied(true); setTimeout(() => setCopied(false), 2000); };
+    const copyText = (text, key) => { navigator.clipboard.writeText(text); setCopied(key); setTimeout(() => setCopied(''), 2000); };
 
     const statusBadge = (status) => {
         const styles = {
@@ -70,6 +77,69 @@ export default function DomainSettings({ quizId }) {
 
     const cleanDomain = searchDomain.trim().replace(/^https?:\/\//, '').replace(/\/$/, '') || 'meuquiz.com.br';
 
+    // Render DNS records table for a domain
+    const renderDnsRecords = (domain) => {
+        const records = domain.dnsRecords;
+        if (!records || records.length === 0) {
+            // Fallback: show generic CNAME instruction
+            return (
+                <div style={{ padding: '12px 14px', borderRadius: 10, background: '#f8fafc', border: '1px solid var(--border)', fontSize: '0.82rem' }}>
+                    <div style={{ fontWeight: 600, marginBottom: 8, fontSize: '0.78rem', color: 'var(--text-muted)' }}>📋 Configure no DNS do seu registrador:</div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '60px 80px 1fr 36px', gap: '6px 10px', alignItems: 'center' }}>
+                        <span style={{ fontWeight: 600, fontSize: '0.72rem', color: 'var(--text-muted)' }}>Tipo</span>
+                        <span style={{ fontWeight: 600, fontSize: '0.72rem', color: 'var(--text-muted)' }}>Nome</span>
+                        <span style={{ fontWeight: 600, fontSize: '0.72rem', color: 'var(--text-muted)' }}>Valor</span>
+                        <span></span>
+
+                        <span style={{ fontFamily: 'monospace', fontSize: '0.8rem', fontWeight: 600, color: '#059669' }}>CNAME</span>
+                        <span style={{ fontFamily: 'monospace', fontSize: '0.8rem' }}>@</span>
+                        <span style={{ fontFamily: 'monospace', fontSize: '0.78rem', wordBreak: 'break-all', color: 'var(--text-primary)' }}>{serverHostname}</span>
+                        <button onClick={() => copyText(serverHostname, `fallback-${domain.id}`)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--primary)', padding: 4, display: 'flex', alignItems: 'center' }}>
+                            {copied === `fallback-${domain.id}` ? <Check size={14} /> : <Copy size={14} />}
+                        </button>
+                    </div>
+                </div>
+            );
+        }
+
+        return (
+            <div style={{ padding: '12px 14px', borderRadius: 10, background: '#f8fafc', border: '1px solid var(--border)', fontSize: '0.82rem' }}>
+                <div style={{ fontWeight: 600, marginBottom: 10, fontSize: '0.78rem', color: 'var(--text-muted)' }}>📋 Configure estes registros no DNS do seu registrador:</div>
+                <div style={{ display: 'grid', gridTemplateColumns: '60px minmax(80px, auto) 1fr 36px', gap: '8px 10px', alignItems: 'center' }}>
+                    {/* Header */}
+                    <span style={{ fontWeight: 700, fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Tipo</span>
+                    <span style={{ fontWeight: 700, fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Nome</span>
+                    <span style={{ fontWeight: 700, fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Valor</span>
+                    <span></span>
+
+                    {records.map((rec, i) => {
+                        const isVerified = rec.status === 'VERIFIED' || rec.status === 'verified';
+                        const isCname = rec.requiredValue?.includes('.railway.app') || rec.requiredValue?.includes('.up.');
+                        const type = isCname ? 'CNAME' : 'TXT';
+                        const statusColor = isVerified ? '#059669' : '#d97706';
+                        const statusIcon = isVerified ? '✅' : '⏳';
+                        const key = `rec-${domain.id}-${i}`;
+
+                        return [
+                            <span key={`t-${i}`} style={{ fontFamily: 'monospace', fontSize: '0.8rem', fontWeight: 600, color: statusColor }}>{type}</span>,
+                            <span key={`n-${i}`} style={{ fontFamily: 'monospace', fontSize: '0.8rem' }}>{rec.hostlabel || '@'}</span>,
+                            <div key={`v-${i}`} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                                <span style={{ fontFamily: 'monospace', fontSize: '0.75rem', wordBreak: 'break-all', color: 'var(--text-primary)' }}>{rec.requiredValue}</span>
+                                <span style={{ fontSize: '0.7rem', flexShrink: 0 }}>{statusIcon}</span>
+                            </div>,
+                            <button key={`c-${i}`} onClick={() => copyText(rec.requiredValue, key)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--primary)', padding: 4, display: 'flex', alignItems: 'center' }}>
+                                {copied === key ? <Check size={14} /> : <Copy size={14} />}
+                            </button>
+                        ];
+                    })}
+                </div>
+                <div style={{ marginTop: 10, fontSize: '0.72rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <Info size={12} /> Copie os valores acima e cole no painel DNS do seu registrador
+                </div>
+            </div>
+        );
+    };
+
     return (
         <div>
             {/* ═══ SECTION 1: BUY DOMAIN ═══ */}
@@ -81,7 +151,7 @@ export default function DomainSettings({ quizId }) {
                         </div>
                         <div>
                             <h3 style={{ margin: 0, fontSize: '1rem' }}>Comprar Domínio</h3>
-                            <p style={{ margin: 0, fontSize: '0.78rem', color: 'var(--text-muted)' }}>Ainda não tem domínio? Compre em um registrador parceiro</p>
+                            <p style={{ margin: 0, fontSize: '0.78rem', color: 'var(--text-muted)' }}>Ainda não tem domínio? Compre em um registrador</p>
                         </div>
                     </div>
                     <button onClick={() => setShowBuySection(!showBuySection)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.82rem', color: 'var(--primary)' }}>
@@ -91,7 +161,6 @@ export default function DomainSettings({ quizId }) {
 
                 {showBuySection && (
                     <>
-                        {/* Domain search */}
                         <div style={{ marginBottom: 16 }}>
                             <div style={{ display: 'flex', gap: 8 }}>
                                 <input className="input" placeholder="Digite o domínio que deseja... ex: meuquiz.com.br" value={searchDomain} onChange={e => setSearchDomain(e.target.value)} style={{ flex: 1, fontSize: '0.9rem' }} />
@@ -103,7 +172,6 @@ export default function DomainSettings({ quizId }) {
                             )}
                         </div>
 
-                        {/* Registrar cards */}
                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))', gap: 10 }}>
                             {REGISTRARS.map(r => (
                                 <a key={r.name} href={r.searchUrl(cleanDomain)} target="_blank" rel="noopener noreferrer"
@@ -147,6 +215,11 @@ export default function DomainSettings({ quizId }) {
                     </div>
                 </div>
 
+                {/* How it works - simple */}
+                <div style={{ marginBottom: 16, padding: '10px 14px', borderRadius: 10, background: 'rgba(99,102,241,0.04)', border: '1px solid rgba(99,102,241,0.12)', fontSize: '0.78rem', color: 'var(--text-muted)', lineHeight: 1.6 }}>
+                    <strong style={{ color: 'var(--text-primary)' }}>Como funciona:</strong> Adicione seu domínio abaixo → Copie os registros DNS → Cole no painel do seu registrador → Clique em "Verificar"
+                </div>
+
                 {/* Add domain form */}
                 <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
                     <input className="input" placeholder="meuquiz.com.br" value={newDomain} onChange={e => setNewDomain(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleAdd()} style={{ flex: 1, fontSize: '0.9rem' }} />
@@ -167,91 +240,72 @@ export default function DomainSettings({ quizId }) {
                     </div>
                 )}
 
-                {/* Instructions */}
-                <button onClick={() => setShowInstructions(!showInstructions)} style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--primary)', fontSize: '0.82rem', fontWeight: 500, padding: '4px 0', marginBottom: 12 }}>
-                    <Info size={14} /> {showInstructions ? 'Ocultar instruções' : 'Como configurar meu domínio?'}
-                </button>
-
-                {showInstructions && (
-                    <div style={{ background: 'rgba(99,102,241,0.04)', border: '1px solid rgba(99,102,241,0.15)', borderRadius: 12, padding: 16, marginBottom: 16, fontSize: '0.82rem', lineHeight: 1.7 }}>
-                        <div style={{ fontWeight: 600, marginBottom: 8, color: 'var(--text-primary)' }}>📋 Passo a passo:</div>
-                        <ol style={{ margin: 0, paddingLeft: 18 }}>
-                            <li>Compre seu domínio (use a seção acima)</li>
-                            <li>Acesse o painel DNS do seu domínio no registrador (Hostinger, Namecheap, GoDaddy, etc.)</li>
-                            <li>
-                                <strong style={{ color: '#dc2626' }}>⚠️ IMPORTANTE:</strong> Verifique se os <strong>Nameservers</strong> do domínio estão configurados corretamente.
-                                <div style={{ marginTop: 6, marginBottom: 6, padding: '10px 12px', borderRadius: 8, background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.15)', fontSize: '0.78rem', color: '#991b1b' }}>
-                                    🚨 Se o domínio estiver usando nameservers de <strong>"parking"</strong> (ex: <code style={{ background: '#fef2f2', padding: '1px 4px', borderRadius: 3 }}>ns1.dns-parking.com</code>), suas configurações DNS <strong>não funcionarão</strong>. Troque para os nameservers reais do seu registrador.
-                                </div>
-                            </li>
-                            <li>
-                                Crie um registro <strong>CNAME</strong> (ou <strong>ALIAS</strong> para domínio raiz) apontando para:
-                                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6, marginBottom: 6, background: '#f1f5f9', borderRadius: 8, padding: '8px 12px', fontFamily: 'monospace', fontSize: '0.85rem' }}>
-                                    <span style={{ flex: 1, wordBreak: 'break-all' }}>{serverHostname}</span>
-                                    <button onClick={copyHostname} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--primary)', display: 'flex', alignItems: 'center', padding: 4 }}>
-                                        {copied ? <Check size={14} /> : <Copy size={14} />}
-                                    </button>
-                                </div>
-                                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: 4 }}>
-                                    📌 Para domínio raiz (ex: meusite.com) use <strong>ALIAS</strong> ou <strong>ANAME</strong>. Para subdomínio (ex: quiz.meusite.com) use <strong>CNAME</strong>.
-                                </div>
-                            </li>
-                            <li>Aguarde a propagação DNS (pode levar até 24h)</li>
-                            <li>Clique em <strong>"Verificar DNS"</strong> ao lado do seu domínio</li>
-                        </ol>
-
-                        {/* Provider-specific tips */}
-                        <div style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 8 }}>
-                            <div style={{ fontWeight: 600, fontSize: '0.78rem', color: 'var(--text-primary)' }}>💡 Dicas por registrador:</div>
-
-                            <div style={{ padding: '8px 12px', borderRadius: 8, background: 'rgba(103,61,230,0.06)', border: '1px solid rgba(103,61,230,0.15)', fontSize: '0.75rem', color: '#4c1d95' }}>
-                                🟣 <strong>Hostinger:</strong> Vá em <em>Domínios → DNS/Nameservers</em>. Certifique-se de que os nameservers são <code style={{ background: '#f5f3ff', padding: '1px 4px', borderRadius: 3 }}>ns1.hostinger.com</code> e <code style={{ background: '#f5f3ff', padding: '1px 4px', borderRadius: 3 }}>ns2.hostinger.com</code> (e <strong>NÃO</strong> <code style={{ background: '#fef2f2', padding: '1px 4px', borderRadius: 3 }}>dns-parking.com</code>). Depois, crie um registro <strong>ALIAS</strong> com nome <strong>@</strong> apontando para <strong>{serverHostname}</strong>.
-                            </div>
-
-                            <div style={{ padding: '8px 12px', borderRadius: 8, background: 'rgba(244,129,32,0.06)', border: '1px solid rgba(244,129,32,0.15)', fontSize: '0.75rem', color: '#7c2d12' }}>
-                                🟡 <strong>Cloudflare:</strong> Desative o proxy (🔶 → ☁️ cinza) no registro CNAME para que a verificação funcione corretamente.
-                            </div>
-
-                            <div style={{ padding: '8px 12px', borderRadius: 8, background: 'rgba(0,156,59,0.06)', border: '1px solid rgba(0,156,59,0.15)', fontSize: '0.75rem', color: '#14532d' }}>
-                                🇧🇷 <strong>Registro.br:</strong> Vá em <em>DNS → Configurar zona</em> e adicione um registro CNAME para o subdomínio desejado apontando para <strong>{serverHostname}</strong>.
-                            </div>
-                        </div>
-                    </div>
-                )}
-
                 {/* Domain list */}
                 {domains.length > 0 && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                        {domains.map(d => (
-                            <div key={d.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 14px', borderRadius: 10, background: '#f9fafb', border: '1px solid var(--border)' }}>
-                                <Globe size={15} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
-                                <div style={{ flex: 1, minWidth: 0 }}>
-                                    <div style={{ fontSize: '0.88rem', fontWeight: 500, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.domain}</div>
-                                    {d.status === 'verified' && (
-                                        <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: 2 }}>
-                                            Acesse: <a href={`https://${d.domain}`} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--primary)', textDecoration: 'none' }}>
-                                                https://{d.domain} <ExternalLink size={10} style={{ verticalAlign: 'middle' }} />
-                                            </a>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                        {domains.map(d => {
+                            const isExpanded = expandedDomain === d.id;
+                            const hasDnsRecords = d.dnsRecords && d.dnsRecords.length > 0;
+
+                            return (
+                                <div key={d.id} style={{ borderRadius: 12, border: '1px solid var(--border)', overflow: 'hidden' }}>
+                                    {/* Domain header */}
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 14px', background: '#f9fafb' }}>
+                                        <Globe size={15} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
+                                        <div style={{ flex: 1, minWidth: 0 }}>
+                                            <div style={{ fontSize: '0.88rem', fontWeight: 500, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.domain}</div>
+                                            {d.status === 'verified' && (
+                                                <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: 2 }}>
+                                                    Acesse: <a href={`https://${d.domain}`} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--primary)', textDecoration: 'none' }}>
+                                                        https://{d.domain} <ExternalLink size={10} style={{ verticalAlign: 'middle' }} />
+                                                    </a>
+                                                </div>
+                                            )}
+                                        </div>
+                                        {statusBadge(d.status)}
+                                        <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+                                            {d.status !== 'verified' && (
+                                                <button onClick={() => setExpandedDomain(isExpanded ? null : d.id)} title="Ver registros DNS"
+                                                    style={{ width: 30, height: 30, borderRadius: 8, background: 'rgba(99,102,241,0.08)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#6366f1', transition: 'var(--transition)' }}>
+                                                    {isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                                                </button>
+                                            )}
+                                            <button onClick={() => handleVerify(d.id)} disabled={verifying === d.id} title="Verificar DNS"
+                                                style={{ width: 30, height: 30, borderRadius: 8, background: verifying === d.id ? '#f3f4f6' : 'rgba(37,99,235,0.08)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--primary)', transition: 'var(--transition)' }}>
+                                                {verifying === d.id ? <Loader2 size={14} className="spin" /> : <RefreshCw size={14} />}
+                                            </button>
+                                            <button onClick={() => handleRemove(d.id)} title="Remover domínio"
+                                                style={{ width: 30, height: 30, borderRadius: 8, background: 'rgba(239,68,68,0.08)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#dc2626', transition: 'var(--transition)' }}>
+                                                <Trash2 size={14} />
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                    {/* Expanded DNS records */}
+                                    {isExpanded && d.status !== 'verified' && (
+                                        <div style={{ padding: '12px 14px', borderTop: '1px solid var(--border)', background: '#fff' }}>
+                                            {renderDnsRecords(d)}
+                                            <div style={{ marginTop: 10, padding: '8px 12px', borderRadius: 8, background: '#fffbeb', border: '1px solid #fde68a', fontSize: '0.72rem', color: '#92400e' }}>
+                                                ⏱️ Após configurar o DNS, aguarde a propagação (pode levar até 24h) e clique em <strong>"Verificar"</strong>
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {/* Auto-expand pending domains without DNS records show a hint */}
+                                    {!isExpanded && d.status === 'pending' && (
+                                        <div 
+                                            onClick={() => setExpandedDomain(d.id)}
+                                            style={{ padding: '8px 14px', borderTop: '1px solid var(--border)', background: '#fffbeb', fontSize: '0.72rem', color: '#92400e', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}>
+                                            <AlertCircle size={12} /> Clique para ver os registros DNS que você precisa configurar
                                         </div>
                                     )}
                                 </div>
-                                {statusBadge(d.status)}
-                                <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
-                                    <button onClick={() => handleVerify(d.id)} disabled={verifying === d.id} title="Verificar DNS"
-                                        style={{ width: 30, height: 30, borderRadius: 8, background: verifying === d.id ? '#f3f4f6' : 'rgba(37,99,235,0.08)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--primary)', transition: 'var(--transition)' }}>
-                                        {verifying === d.id ? <Loader2 size={14} className="spin" /> : <RefreshCw size={14} />}
-                                    </button>
-                                    <button onClick={() => handleRemove(d.id)} title="Remover domínio"
-                                        style={{ width: 30, height: 30, borderRadius: 8, background: 'rgba(239,68,68,0.08)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#dc2626', transition: 'var(--transition)' }}>
-                                        <Trash2 size={14} />
-                                    </button>
-                                </div>
-                            </div>
-                        ))}
+                            );
+                        })}
                     </div>
                 )}
 
-                {domains.length === 0 && !showInstructions && (
+                {domains.length === 0 && (
                     <div style={{ textAlign: 'center', padding: '16px 0', color: 'var(--text-muted)', fontSize: '0.82rem' }}>
                         Nenhum domínio configurado. Adicione um acima para começar.
                     </div>

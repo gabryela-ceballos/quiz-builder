@@ -90,6 +90,11 @@ try {
     db.exec(`ALTER TABLE quizzes ADD COLUMN user_id INTEGER`);
 } catch (e) { /* column already exists */ }
 
+// Add railway_dns column to domains if not present
+try {
+    db.exec(`ALTER TABLE domains ADD COLUMN railway_dns TEXT`);
+} catch (e) { /* column already exists */ }
+
 // ── Plan limits ──
 // 🧪 TEST MODE — set to false when ready to enforce real limits
 const TEST_MODE = true;
@@ -428,25 +433,31 @@ app.delete('/api/quizzes', (req, res) => {
 
 // ── Custom Domains ──
 app.get('/api/domains/:quizId', (req, res) => {
-    const rows = db.prepare('SELECT id, quiz_id, domain, status, verified_at, created_at FROM domains WHERE quiz_id = ? ORDER BY created_at DESC').all(req.params.quizId);
-    res.json(rows);
+    const rows = db.prepare('SELECT id, quiz_id, domain, status, verified_at, railway_dns, created_at FROM domains WHERE quiz_id = ? ORDER BY created_at DESC').all(req.params.quizId);
+    res.json(rows.map(r => {
+        let dnsRecords = null;
+        try { dnsRecords = r.railway_dns ? JSON.parse(r.railway_dns) : null; } catch { }
+        return { ...r, dnsRecords };
+    }));
 });
 
 // All domains across all quizzes
 app.get('/api/domains-all', (req, res) => {
     const rows = db.prepare(`
-        SELECT d.id, d.quiz_id, d.domain, d.status, d.verified_at, d.created_at, q.data as quiz_data
+        SELECT d.id, d.quiz_id, d.domain, d.status, d.verified_at, d.railway_dns, d.created_at, q.data as quiz_data
         FROM domains d LEFT JOIN quizzes q ON d.quiz_id = q.id
         ORDER BY d.created_at DESC
     `).all();
     res.json(rows.map(r => {
         let quizName = 'Quiz removido';
         try { quizName = JSON.parse(r.quiz_data)?.name || 'Sem título'; } catch { }
-        return { id: r.id, quiz_id: r.quiz_id, domain: r.domain, status: r.status, verified_at: r.verified_at, created_at: r.created_at, quizName };
+        let dnsRecords = null;
+        try { dnsRecords = r.railway_dns ? JSON.parse(r.railway_dns) : null; } catch { }
+        return { id: r.id, quiz_id: r.quiz_id, domain: r.domain, status: r.status, verified_at: r.verified_at, created_at: r.created_at, quizName, dnsRecords };
     }));
 });
 
-app.post('/api/domains', (req, res) => {
+app.post('/api/domains', async (req, res) => {
     const { quizId, domain } = req.body;
     if (!quizId || !domain) return res.status(400).json({ error: 'quizId e domain são obrigatórios' });
 
@@ -462,8 +473,29 @@ app.post('/api/domains', (req, res) => {
     const quiz = db.prepare('SELECT id FROM quizzes WHERE id = ?').get(quizId);
     if (!quiz) return res.status(404).json({ error: 'Quiz não encontrado' });
 
-    const result = db.prepare('INSERT INTO domains (quiz_id, domain) VALUES (?, ?)').run(quizId, cleanDomain);
-    res.json({ id: result.lastInsertRowid, quiz_id: quizId, domain: cleanDomain, status: 'pending', serverHostname: SERVER_HOSTNAME });
+    // Register on Railway immediately to get DNS records
+    let dnsRecords = null;
+    let railwayError = null;
+    const railwayResult = await registerDomainOnRailway(cleanDomain);
+    if (railwayResult.success && railwayResult.data?.status?.dnsRecords) {
+        dnsRecords = railwayResult.data.status.dnsRecords;
+    } else if (!railwayResult.success && railwayResult.reason !== 'credentials_missing') {
+        railwayError = railwayResult.reason;
+    }
+
+    const result = db.prepare('INSERT INTO domains (quiz_id, domain, railway_dns) VALUES (?, ?, ?)').run(
+        quizId, cleanDomain, dnsRecords ? JSON.stringify(dnsRecords) : null
+    );
+    
+    res.json({ 
+        id: result.lastInsertRowid, 
+        quiz_id: quizId, 
+        domain: cleanDomain, 
+        status: 'pending', 
+        dnsRecords,
+        railwayError,
+        serverHostname: SERVER_HOSTNAME,
+    });
 });
 
 app.delete('/api/domains/:id', (req, res) => {
