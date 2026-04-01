@@ -3900,35 +3900,42 @@ The viewport is 430x932 pixels (mobile). Return ONLY valid JSON.`
             console.log(`[Clone-Stream] 🌐 Starting translation to ${langName} for ${allPages.length} pages...`);
             send('progress', { stage: 'translating', msg: `🌐 Traduzindo para ${langName}...`, pct: 88 });
 
-            // Extract ALL visible text strings from HTML (improved version)
+            // Extract ONLY visible user-facing text from HTML (aggressive CSS/JS filtering)
             function extractTexts(html) {
                 const texts = [];
-                // Remove script/style content
-                const cleaned = html
-                    .replace(/<script[\s\S]*?<\/script>/gi, '')
-                    .replace(/<style[\s\S]*?<\/style>/gi, '')
-                    .replace(/<!--[\s\S]*?-->/g, '');
+                // AGGRESSIVELY remove script/style — handle malformed tags, inline styles etc
+                let cleaned = html;
+                // Remove everything between <style...> and </style>, including variations
+                cleaned = cleaned.replace(/<style\b[^>]*>[\s\S]*?<\/style\s*>/gi, '');
+                // Remove everything between <script...> and </script>
+                cleaned = cleaned.replace(/<script\b[^>]*>[\s\S]*?<\/script\s*>/gi, '');
+                // Remove HTML comments
+                cleaned = cleaned.replace(/<!--[\s\S]*?-->/g, '');
+                // Remove inline style attributes content (not the visible text)
+                cleaned = cleaned.replace(/style\s*=\s*"[^"]*"/gi, '');
+                cleaned = cleaned.replace(/style\s*=\s*'[^']*'/gi, '');
+                // Remove class attributes
+                cleaned = cleaned.replace(/class\s*=\s*"[^"]*"/gi, '');
                 
-                // Method 1: Text between tags (most reliable for simple text)
+                // Extract text between tags
                 const tagMatches = cleaned.match(/>[^<]+</g) || [];
                 for (const m of tagMatches) {
                     const t = m.slice(1, -1).trim();
-                    if (t.length >= 2 && t.length <= 500 &&
-                        !/^[\s\d.,;:!?@#$%^&*()+=\-_\[\]{}|\\/'"~`¿¡°•→←↑↓]+$/.test(t) &&
-                        !/^https?:/.test(t) &&
-                        !/^[a-f0-9-]{20,}$/i.test(t) &&  // Skip UUIDs/hashes
-                        !/^(rgb|hsl|#[a-f0-9]+|var\()/i.test(t)) {  // Skip CSS values
-                        texts.push(t);
-                    }
-                }
-
-                // Method 2: Also extract text from attributes (alt, title, placeholder, aria-label)
-                const attrMatches = cleaned.match(/(?:alt|title|placeholder|aria-label)\s*=\s*"([^"]+)"/gi) || [];
-                for (const m of attrMatches) {
-                    const valMatch = m.match(/=\s*"([^"]+)"/);
-                    if (valMatch && valMatch[1].trim().length >= 3) {
-                        texts.push(valMatch[1].trim());
-                    }
+                    if (t.length < 2 || t.length > 200) continue;  // Skip very short or very long
+                    // Must contain at least one letter (any alphabet)
+                    if (!/[a-záéíóúñüàèìòùâêîôûäëïöüãõçœæ]/i.test(t)) continue;
+                    // Skip CSS-like content (has { } or lots of : ;)
+                    if (/[{}]/.test(t)) continue;
+                    if ((t.match(/[:;]/g) || []).length > 2) continue;
+                    // Skip URLs
+                    if (/^https?:|^www\.|^data:/.test(t)) continue;
+                    // Skip CSS values
+                    if (/^(rgb|hsl|var\(|#[a-f0-9]{3,})/i.test(t)) continue;
+                    // Skip code/function patterns
+                    if (/function\s*\(|=>\s*{|const |let |var |import |export |require\(/.test(t)) continue;
+                    // Skip CSS selectors/properties
+                    if (/\.[a-z][\w-]*\s*{|@keyframes|@media|animation:|transform:|display:|position:|background:|border:|margin:|padding:|font-/i.test(t)) continue;
+                    texts.push(t);
                 }
 
                 return [...new Set(texts)]; // deduplicate
