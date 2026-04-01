@@ -839,6 +839,9 @@ app.get('/api/railway-debug', async (req, res) => {
                             updatedAt
                             status {
                                 certificateStatus
+                                verified
+                                verificationDnsHost
+                                verificationToken
                                 dnsRecords {
                                     hostlabel
                                     requiredValue
