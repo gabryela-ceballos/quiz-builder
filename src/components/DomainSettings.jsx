@@ -174,21 +174,44 @@ export default function DomainSettings({ quizId }) {
                         <div style={{ fontWeight: 600, marginBottom: 8, color: 'var(--text-primary)' }}>📋 Passo a passo:</div>
                         <ol style={{ margin: 0, paddingLeft: 18 }}>
                             <li>Compre seu domínio (use a seção acima)</li>
-                            <li>Acesse o painel DNS do seu domínio</li>
+                            <li>Acesse o painel DNS do seu domínio no registrador (Hostinger, Namecheap, GoDaddy, etc.)</li>
                             <li>
-                                Crie um registro <strong>CNAME</strong> apontando para:
+                                <strong style={{ color: '#dc2626' }}>⚠️ IMPORTANTE:</strong> Verifique se os <strong>Nameservers</strong> do domínio estão configurados corretamente.
+                                <div style={{ marginTop: 6, marginBottom: 6, padding: '10px 12px', borderRadius: 8, background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.15)', fontSize: '0.78rem', color: '#991b1b' }}>
+                                    🚨 Se o domínio estiver usando nameservers de <strong>"parking"</strong> (ex: <code style={{ background: '#fef2f2', padding: '1px 4px', borderRadius: 3 }}>ns1.dns-parking.com</code>), suas configurações DNS <strong>não funcionarão</strong>. Troque para os nameservers reais do seu registrador.
+                                </div>
+                            </li>
+                            <li>
+                                Crie um registro <strong>CNAME</strong> (ou <strong>ALIAS</strong> para domínio raiz) apontando para:
                                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6, marginBottom: 6, background: '#f1f5f9', borderRadius: 8, padding: '8px 12px', fontFamily: 'monospace', fontSize: '0.85rem' }}>
                                     <span style={{ flex: 1, wordBreak: 'break-all' }}>{serverHostname}</span>
                                     <button onClick={copyHostname} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--primary)', display: 'flex', alignItems: 'center', padding: 4 }}>
                                         {copied ? <Check size={14} /> : <Copy size={14} />}
                                     </button>
                                 </div>
+                                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: 4 }}>
+                                    📌 Para domínio raiz (ex: meusite.com) use <strong>ALIAS</strong> ou <strong>ANAME</strong>. Para subdomínio (ex: quiz.meusite.com) use <strong>CNAME</strong>.
+                                </div>
                             </li>
                             <li>Aguarde a propagação DNS (pode levar até 24h)</li>
                             <li>Clique em <strong>"Verificar DNS"</strong> ao lado do seu domínio</li>
                         </ol>
-                        <div style={{ marginTop: 10, padding: '8px 12px', borderRadius: 8, background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.2)', color: '#92400e', fontSize: '0.78rem' }}>
-                            💡 <strong>Dica:</strong> Se estiver usando Cloudflare, desative o proxy (🔶 → ☁️) no registro CNAME.
+
+                        {/* Provider-specific tips */}
+                        <div style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                            <div style={{ fontWeight: 600, fontSize: '0.78rem', color: 'var(--text-primary)' }}>💡 Dicas por registrador:</div>
+
+                            <div style={{ padding: '8px 12px', borderRadius: 8, background: 'rgba(103,61,230,0.06)', border: '1px solid rgba(103,61,230,0.15)', fontSize: '0.75rem', color: '#4c1d95' }}>
+                                🟣 <strong>Hostinger:</strong> Vá em <em>Domínios → DNS/Nameservers</em>. Certifique-se de que os nameservers são <code style={{ background: '#f5f3ff', padding: '1px 4px', borderRadius: 3 }}>ns1.hostinger.com</code> e <code style={{ background: '#f5f3ff', padding: '1px 4px', borderRadius: 3 }}>ns2.hostinger.com</code> (e <strong>NÃO</strong> <code style={{ background: '#fef2f2', padding: '1px 4px', borderRadius: 3 }}>dns-parking.com</code>). Depois, crie um registro <strong>ALIAS</strong> com nome <strong>@</strong> apontando para <strong>{serverHostname}</strong>.
+                            </div>
+
+                            <div style={{ padding: '8px 12px', borderRadius: 8, background: 'rgba(244,129,32,0.06)', border: '1px solid rgba(244,129,32,0.15)', fontSize: '0.75rem', color: '#7c2d12' }}>
+                                🟡 <strong>Cloudflare:</strong> Desative o proxy (🔶 → ☁️ cinza) no registro CNAME para que a verificação funcione corretamente.
+                            </div>
+
+                            <div style={{ padding: '8px 12px', borderRadius: 8, background: 'rgba(0,156,59,0.06)', border: '1px solid rgba(0,156,59,0.15)', fontSize: '0.75rem', color: '#14532d' }}>
+                                🇧🇷 <strong>Registro.br:</strong> Vá em <em>DNS → Configurar zona</em> e adicione um registro CNAME para o subdomínio desejado apontando para <strong>{serverHostname}</strong>.
+                            </div>
                         </div>
                     </div>
                 )}

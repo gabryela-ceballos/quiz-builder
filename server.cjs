@@ -471,6 +471,54 @@ app.delete('/api/domains/:id', (req, res) => {
     res.json({ ok: true });
 });
 
+// ── Railway Custom Domain API ──
+// Railway provides SERVICE_ID and ENVIRONMENT_ID automatically.
+// Only RAILWAY_API_TOKEN needs to be set manually in Railway dashboard → Variables.
+// To create a token: Railway dashboard → Account Settings → Tokens → Create Token
+const RAILWAY_API_TOKEN = process.env.RAILWAY_API_TOKEN || '';
+const RAILWAY_SERVICE_ID = process.env.RAILWAY_SERVICE_ID || '';
+const RAILWAY_ENVIRONMENT_ID = process.env.RAILWAY_ENVIRONMENT_ID || '';
+const RAILWAY_API_URL = 'https://backboard.railway.com/graphql/v2';
+
+async function registerDomainOnRailway(domain) {
+    if (!RAILWAY_API_TOKEN || !RAILWAY_SERVICE_ID || !RAILWAY_ENVIRONMENT_ID) {
+        console.warn('[Railway] ⚠️ Railway API not configured. Set RAILWAY_API_TOKEN, RAILWAY_SERVICE_ID, RAILWAY_ENVIRONMENT_ID.');
+        return { success: false, reason: 'credentials_missing' };
+    }
+    try {
+        const checkRes = await fetch(RAILWAY_API_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${RAILWAY_API_TOKEN}` },
+            body: JSON.stringify({ query: `query { customDomainAvailable(domain: "${domain}") { available message } }` }),
+        });
+        const checkData = await checkRes.json();
+        if (checkData?.data?.customDomainAvailable?.available === false) {
+            const msg = checkData?.data?.customDomainAvailable?.message || '';
+            if (msg.toLowerCase().includes('already') || msg.toLowerCase().includes('exists')) return { success: true, reason: 'already_registered' };
+            return { success: false, reason: msg };
+        }
+        const createRes = await fetch(RAILWAY_API_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${RAILWAY_API_TOKEN}` },
+            body: JSON.stringify({
+                query: `mutation { customDomainCreate(input: { serviceId: "${RAILWAY_SERVICE_ID}", environmentId: "${RAILWAY_ENVIRONMENT_ID}", domain: "${domain}" }) { id domain } }`,
+            }),
+        });
+        const createData = await createRes.json();
+        if (createData?.errors) {
+            const errMsg = createData.errors.map(e => e.message).join(', ');
+            if (errMsg.toLowerCase().includes('already') || errMsg.toLowerCase().includes('exists')) return { success: true, reason: 'already_registered' };
+            console.error(`[Railway] ❌ Error:`, errMsg);
+            return { success: false, reason: errMsg };
+        }
+        console.log(`[Railway] ✅ Domain ${domain} registered! SSL auto-provisioned.`);
+        return { success: true, data: createData?.data?.customDomainCreate };
+    } catch (err) {
+        console.error(`[Railway] ❌ API error:`, err.message);
+        return { success: false, reason: err.message };
+    }
+}
+
 app.post('/api/domains/:id/verify', async (req, res) => {
     const row = db.prepare('SELECT * FROM domains WHERE id = ?').get(req.params.id);
     if (!row) return res.status(404).json({ error: 'Domínio não encontrado' });
@@ -481,13 +529,18 @@ app.post('/api/domains/:id/verify', async (req, res) => {
         const serverHost = SERVER_HOSTNAME.split(':')[0].toLowerCase();
         const verified = records.some(r => r.toLowerCase().includes(serverHost));
 
-        // Also check A/AAAA records as fallback (some DNS configs use A records)
+        // Also check A/AAAA records as fallback — but only accept if IP matches our server
         let aVerified = false;
         if (!verified) {
             try {
-                const aRecords = await dns.promises.resolve4(row.domain).catch(() => []);
-                // If domain resolves at all, consider it potentially valid
-                aVerified = aRecords.length > 0;
+                const [domainIPs, serverIPs] = await Promise.all([
+                    dns.promises.resolve4(row.domain).catch(() => []),
+                    dns.promises.resolve4(serverHost).catch(() => []),
+                ]);
+                // Only verify if the domain's A record points to the SAME IP as our server
+                if (domainIPs.length > 0 && serverIPs.length > 0) {
+                    aVerified = domainIPs.some(ip => serverIPs.includes(ip));
+                }
             } catch (e) { /* ignore */ }
         }
 
@@ -497,15 +550,39 @@ app.post('/api/domains/:id/verify', async (req, res) => {
 
         db.prepare('UPDATE domains SET status = ?, verified_at = ? WHERE id = ?').run(status, now, row.id);
 
+        let message;
+        let sslStatus = null;
+
+        if (isVerified) {
+            message = `✅ Domínio ${row.domain} verificado com sucesso!`;
+            // Auto-register on Railway for SSL certificate provisioning
+            const railwayResult = await registerDomainOnRailway(row.domain);
+            if (railwayResult.success) {
+                sslStatus = 'provisioning';
+                message += ' 🔒 SSL será gerado automaticamente em alguns minutos.';
+            } else if (railwayResult.reason === 'credentials_missing') {
+                sslStatus = 'manual';
+            } else {
+                sslStatus = 'warning';
+                message += ` ⚠️ SSL: ${railwayResult.reason}`;
+            }
+        } else {
+            const domainIPs = await dns.promises.resolve4(row.domain).catch(() => []);
+            if (domainIPs.length > 0) {
+                message = `❌ O domínio ${row.domain} resolve para ${domainIPs.join(', ')}, mas não aponta para o nosso servidor (${SERVER_HOSTNAME}). Verifique se os nameservers estão corretos e crie um CNAME/ALIAS apontando para ${SERVER_HOSTNAME}.`;
+            } else {
+                message = `❌ CNAME não encontrado. Crie um registro CNAME apontando ${row.domain} para ${SERVER_HOSTNAME}`;
+            }
+        }
+
         res.json({
             id: row.id,
             domain: row.domain,
             status,
             verified_at: now,
             cnameRecords: records,
-            message: isVerified
-                ? `✅ Domínio ${row.domain} verificado com sucesso!`
-                : `❌ CNAME não encontrado. Crie um registro CNAME apontando ${row.domain} para ${SERVER_HOSTNAME}`,
+            message,
+            sslStatus,
         });
     } catch (err) {
         db.prepare('UPDATE domains SET status = ? WHERE id = ?').run('error', row.id);
