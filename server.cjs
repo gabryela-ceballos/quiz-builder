@@ -644,8 +644,11 @@ app.post('/api/domains/:id/verify', async (req, res) => {
     if (!row) return res.status(404).json({ error: 'Domínio não encontrado' });
 
     try {
-        // Always try to fetch/update Railway DNS records first
+        // Load existing DNS records from DB first
         let dnsRecords = null;
+        try { dnsRecords = row.railway_dns ? JSON.parse(row.railway_dns) : null; } catch { }
+
+        // Try to fetch/update Railway DNS records
         const railwayResult = await registerDomainOnRailway(row.domain);
         if (railwayResult.success && railwayResult.data?.status?.dnsRecords) {
             dnsRecords = railwayResult.data.status.dnsRecords;
@@ -656,34 +659,62 @@ app.post('/api/domains/:id/verify', async (req, res) => {
         const railwayVerified = dnsRecords && dnsRecords.length > 0 && 
             dnsRecords.every(r => r.status === 'VERIFIED' || r.status === 'verified' || r.status === 'VALID');
 
-        // Also do our own DNS check
-        const records = await dns.promises.resolveCname(row.domain).catch(() => []);
+        // Our own DNS check - multiple methods
         const serverHost = SERVER_HOSTNAME.split(':')[0].toLowerCase();
-        let dnsVerified = records.some(r => r.toLowerCase().includes(serverHost));
+        let dnsVerified = false;
+        let detectedRecords = [];
 
-        // A record fallback
+        // Method 1: CNAME check
+        const cnameRecords = await dns.promises.resolveCname(row.domain).catch(() => []);
+        if (cnameRecords.length > 0) {
+            detectedRecords.push(`CNAME: ${cnameRecords.join(', ')}`);
+            dnsVerified = cnameRecords.some(r => {
+                const lower = r.toLowerCase();
+                return lower.includes(serverHost) || lower.includes('.railway.app') || lower.includes('.up.');
+            });
+        }
+
+        // Method 2: A record check — compare IPs
         if (!dnsVerified) {
             try {
                 const [domainIPs, serverIPs] = await Promise.all([
                     dns.promises.resolve4(row.domain).catch(() => []),
                     dns.promises.resolve4(serverHost).catch(() => []),
                 ]);
+                if (domainIPs.length > 0) detectedRecords.push(`A: ${domainIPs.join(', ')}`);
                 if (domainIPs.length > 0 && serverIPs.length > 0) {
                     dnsVerified = domainIPs.some(ip => serverIPs.includes(ip));
                 }
             } catch (e) { /* ignore */ }
         }
 
-        // Also check if CNAME points to railway domain (e.g. bldwnfav.up.railway.app)
-        if (!dnsVerified && records.length > 0) {
-            dnsVerified = records.some(r => r.toLowerCase().includes('.railway.app'));
+        // Method 3: Try resolving via any method
+        if (!dnsVerified) {
+            try {
+                const anyRecords = await dns.promises.resolve(row.domain).catch(() => []);
+                if (anyRecords.length > 0 && !detectedRecords.length) {
+                    detectedRecords.push(`DNS: ${anyRecords.join(', ')}`);
+                }
+            } catch { }
         }
 
         const isVerified = dnsVerified || railwayVerified;
-        const status = isVerified ? 'verified' : 'pending';
-        const now = isVerified ? Date.now() : null;
 
-        db.prepare('UPDATE domains SET status = ?, verified_at = ? WHERE id = ?').run(status, now, row.id);
+        // IMPORTANT: Don't downgrade already-verified domains
+        let status, now;
+        if (isVerified) {
+            status = 'verified';
+            now = Date.now();
+        } else if (row.status === 'verified') {
+            // Keep verified status if it was already verified before
+            status = 'verified';
+            now = row.verified_at;
+        } else {
+            status = 'pending';
+            now = null;
+        }
+
+        db.prepare('UPDATE domains SET status = ?, verified_at = ? WHERE id = ?').run(status, now || null, row.id);
 
         let message;
         let sslStatus = null;
@@ -691,16 +722,21 @@ app.post('/api/domains/:id/verify', async (req, res) => {
         if (isVerified) {
             message = `✅ Domínio ${row.domain} verificado com sucesso! 🔒 SSL será gerado automaticamente.`;
             sslStatus = 'provisioning';
+        } else if (row.status === 'verified') {
+            message = `✅ Domínio ${row.domain} continua verificado. DNS OK.`;
+            sslStatus = 'provisioning';
         } else if (dnsRecords && dnsRecords.length > 0) {
             const pendingRecords = dnsRecords.filter(r => r.status !== 'VERIFIED' && r.status !== 'verified' && r.status !== 'VALID');
-            message = `⏳ DNS ainda não propagou. Faltam ${pendingRecords.length} registro(s). Configure conforme a tabela abaixo e aguarde a propagação.`;
+            if (pendingRecords.length > 0) {
+                message = `⏳ DNS ainda propagando. Configure os registros abaixo e aguarde (pode levar até 24h).`;
+            } else {
+                message = `⏳ Aguardando propagação DNS... Tente novamente em alguns minutos.`;
+            }
         } else {
-            message = `❌ Configure os registros DNS do domínio e tente novamente.`;
-        }
-
-        // Parse stored dns records if we didn't get fresh ones
-        if (!dnsRecords) {
-            try { dnsRecords = row.railway_dns ? JSON.parse(row.railway_dns) : null; } catch { }
+            message = `⏳ Configure o CNAME apontando para ${serverHostname || SERVER_HOSTNAME} e aguarde a propagação.`;
+            if (detectedRecords.length > 0) {
+                message += ` Detectado: ${detectedRecords.join('; ')}`;
+            }
         }
 
         res.json({
@@ -713,8 +749,11 @@ app.post('/api/domains/:id/verify', async (req, res) => {
             sslStatus,
         });
     } catch (err) {
-        db.prepare('UPDATE domains SET status = ? WHERE id = ?').run('error', row.id);
-        res.json({ id: row.id, domain: row.domain, status: 'error', message: `Erro ao verificar DNS: ${err.message}` });
+        // Don't downgrade on error either
+        if (row.status !== 'verified') {
+            db.prepare('UPDATE domains SET status = ? WHERE id = ?').run('error', row.id);
+        }
+        res.json({ id: row.id, domain: row.domain, status: row.status || 'error', message: `Erro ao verificar DNS: ${err.message}` });
     }
 });
 
