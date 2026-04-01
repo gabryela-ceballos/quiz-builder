@@ -281,12 +281,10 @@ export default function DomainSettings({ quizId }) {
                                         </div>
                                         {statusBadge(d.status)}
                                         <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
-                                            {d.status !== 'verified' && (
-                                                <button onClick={() => setExpandedDomain(isExpanded ? null : d.id)} title="Ver registros DNS"
-                                                    style={{ width: 30, height: 30, borderRadius: 8, background: 'rgba(99,102,241,0.08)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#6366f1', transition: 'var(--transition)' }}>
-                                                    {isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-                                                </button>
-                                            )}
+                                            <button onClick={() => setExpandedDomain(isExpanded ? null : d.id)} title="Ver registros DNS"
+                                                style={{ width: 30, height: 30, borderRadius: 8, background: 'rgba(99,102,241,0.08)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#6366f1', transition: 'var(--transition)' }}>
+                                                {isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                                            </button>
                                             <button onClick={() => handleVerify(d.id)} disabled={verifying === d.id} title="Verificar DNS"
                                                 style={{ width: 30, height: 30, borderRadius: 8, background: verifying === d.id ? '#f3f4f6' : 'rgba(37,99,235,0.08)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--primary)', transition: 'var(--transition)' }}>
                                                 {verifying === d.id ? <Loader2 size={14} className="spin" /> : <RefreshCw size={14} />}
@@ -298,22 +296,33 @@ export default function DomainSettings({ quizId }) {
                                         </div>
                                     </div>
 
-                                    {/* Expanded DNS records */}
-                                    {isExpanded && d.status !== 'verified' && (
+                                    {/* Expanded DNS records - always available */}
+                                    {isExpanded && (
                                         <div style={{ padding: '12px 14px', borderTop: '1px solid var(--border)', background: '#fff' }}>
                                             {renderDnsRecords(d)}
-                                            <div style={{ marginTop: 10, padding: '8px 12px', borderRadius: 8, background: '#fffbeb', border: '1px solid #fde68a', fontSize: '0.72rem', color: '#92400e' }}>
-                                                ⏱️ Após configurar o DNS, aguarde a propagação (pode levar até 24h) e clique em <strong>"Verificar"</strong>
-                                            </div>
+                                            {d.status !== 'verified' && (
+                                                <div style={{ marginTop: 10, padding: '8px 12px', borderRadius: 8, background: '#fffbeb', border: '1px solid #fde68a', fontSize: '0.72rem', color: '#92400e' }}>
+                                                    ⏱️ Após configurar o DNS, aguarde a propagação (pode levar até 24h) e clique em <strong>"Verificar"</strong>
+                                                </div>
+                                            )}
                                         </div>
                                     )}
 
-                                    {/* Auto-expand pending domains without DNS records show a hint */}
+                                    {/* Hint for pending domains */}
                                     {!isExpanded && d.status === 'pending' && (
                                         <div 
                                             onClick={() => setExpandedDomain(d.id)}
                                             style={{ padding: '8px 14px', borderTop: '1px solid var(--border)', background: '#fffbeb', fontSize: '0.72rem', color: '#92400e', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}>
                                             <AlertCircle size={12} /> Clique para ver os registros DNS que você precisa configurar
+                                        </div>
+                                    )}
+
+                                    {/* Hint for verified domains with pending TXT */}
+                                    {!isExpanded && d.status === 'verified' && d.dnsRecords && d.dnsRecords.some(r => !r.requiredValue?.includes('.railway.app') && !r.requiredValue?.includes('.up.') && r.status !== 'VERIFIED' && r.status !== 'verified' && r.status !== 'VALID') && (
+                                        <div 
+                                            onClick={() => setExpandedDomain(d.id)}
+                                            style={{ padding: '8px 14px', borderTop: '1px solid var(--border)', background: '#fffbeb', fontSize: '0.72rem', color: '#92400e', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}>
+                                            <AlertCircle size={12} /> ⚠️ Registro TXT pendente — clique para ver e configurar
                                         </div>
                                     )}
                                 </div>
