@@ -3968,13 +3968,15 @@ The viewport is 430x932 pixels (mobile). Return ONLY valid JSON.`
                     }
                     const aiData = await aiRes.json();
                     const content = aiData.choices?.[0]?.message?.content || '';
-                    console.log(`[Clone] AI response length: ${content.length} chars`);
+                    console.log(`[Clone] AI response (first 500): ${content.slice(0, 500)}`);
                     
                     const translated = [];
                     for (let i = 0; i < texts.length; i++) {
                         const regex = new RegExp(`\\[${i}\\]\\s*(.+?)(?=\\n\\[\\d+\\]|$)`, 's');
                         const match = content.match(regex);
-                        translated.push(match ? match[1].trim() : texts[i]);
+                        const result = match ? match[1].trim() : texts[i];
+                        if (i < 3) console.log(`[Clone] Text[${i}]: "${texts[i].slice(0,50)}" => "${result.slice(0,50)}" (matched=${!!match})`);
+                        translated.push(result);
                     }
                     return translated;
                 } catch (err) {
@@ -4010,14 +4012,20 @@ The viewport is 430x932 pixels (mobile). Return ONLY valid JSON.`
                             const original = texts[ti];
                             const translated = allTranslated[ti];
 
-                            // Method 1: Direct string replace (handles most cases)
-                            if (translatedCode.includes(original)) {
+                            const inCode = translatedCode.includes(original);
+                            const inFull = translatedFull.includes(original);
+                            if (ti < 3) console.log(`[Clone] Apply[${ti}]: "${original.slice(0,40)}" → "${translated.slice(0,40)}" inCode=${inCode} inFull=${inFull}`);
+
+                            if (inCode) {
                                 translatedCode = translatedCode.split(original).join(translated);
                                 appliedCount++;
                             }
-                            if (translatedFull.includes(original)) {
+                            if (inFull) {
                                 translatedFull = translatedFull.split(original).join(translated);
+                                appliedCount++;
                             }
+                        } else if (ti < 3) {
+                            console.log(`[Clone] Skip[${ti}]: same text? orig="${(texts[ti]||'').slice(0,40)}" trans="${(allTranslated[ti]||'').slice(0,40)}"`);
                         }
                     }
                     allPages[pi].code = translatedCode;
