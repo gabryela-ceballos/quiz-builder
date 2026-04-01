@@ -472,47 +472,79 @@ app.delete('/api/domains/:id', (req, res) => {
 });
 
 // ── Railway Custom Domain API ──
-// Railway provides SERVICE_ID and ENVIRONMENT_ID automatically.
-// Only RAILWAY_API_TOKEN needs to be set manually in Railway dashboard → Variables.
-// To create a token: Railway dashboard → Account Settings → Tokens → Create Token
+// Railway auto-provides: RAILWAY_SERVICE_ID, RAILWAY_ENVIRONMENT_ID, RAILWAY_PROJECT_ID
+// You only need to manually set RAILWAY_API_TOKEN in Railway dashboard → Variables.
+// To create token: Railway dashboard → Account Settings → Tokens → Create Token
 const RAILWAY_API_TOKEN = process.env.RAILWAY_API_TOKEN || '';
 const RAILWAY_SERVICE_ID = process.env.RAILWAY_SERVICE_ID || '';
 const RAILWAY_ENVIRONMENT_ID = process.env.RAILWAY_ENVIRONMENT_ID || '';
-const RAILWAY_API_URL = 'https://backboard.railway.com/graphql/v2';
+const RAILWAY_PROJECT_ID = process.env.RAILWAY_PROJECT_ID || '';
+const RAILWAY_API_URL = 'https://backboard.railway.app/graphql/v2';
 
 async function registerDomainOnRailway(domain) {
-    if (!RAILWAY_API_TOKEN || !RAILWAY_SERVICE_ID || !RAILWAY_ENVIRONMENT_ID) {
-        console.warn('[Railway] ⚠️ Railway API not configured. Set RAILWAY_API_TOKEN, RAILWAY_SERVICE_ID, RAILWAY_ENVIRONMENT_ID.');
+    if (!RAILWAY_API_TOKEN || !RAILWAY_SERVICE_ID || !RAILWAY_ENVIRONMENT_ID || !RAILWAY_PROJECT_ID) {
+        console.warn('[Railway] ⚠️ Railway API not configured. Need: RAILWAY_API_TOKEN (manual), RAILWAY_SERVICE_ID, RAILWAY_ENVIRONMENT_ID, RAILWAY_PROJECT_ID (auto).');
+        console.warn('[Railway] Current values:', { 
+            token: RAILWAY_API_TOKEN ? '✅ set' : '❌ missing',
+            service: RAILWAY_SERVICE_ID ? '✅ ' + RAILWAY_SERVICE_ID : '❌ missing', 
+            env: RAILWAY_ENVIRONMENT_ID ? '✅ ' + RAILWAY_ENVIRONMENT_ID : '❌ missing',
+            project: RAILWAY_PROJECT_ID ? '✅ ' + RAILWAY_PROJECT_ID : '❌ missing',
+        });
         return { success: false, reason: 'credentials_missing' };
     }
+    
+    const headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${RAILWAY_API_TOKEN}` };
+    
     try {
-        const checkRes = await fetch(RAILWAY_API_URL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${RAILWAY_API_TOKEN}` },
-            body: JSON.stringify({ query: `query { customDomainAvailable(domain: "${domain}") { available message } }` }),
-        });
-        const checkData = await checkRes.json();
-        if (checkData?.data?.customDomainAvailable?.available === false) {
-            const msg = checkData?.data?.customDomainAvailable?.message || '';
-            if (msg.toLowerCase().includes('already') || msg.toLowerCase().includes('exists')) return { success: true, reason: 'already_registered' };
-            return { success: false, reason: msg };
-        }
+        // Step 1: Create custom domain via GraphQL mutation
+        console.log(`[Railway] 🔄 Registering domain: ${domain}...`);
         const createRes = await fetch(RAILWAY_API_URL, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${RAILWAY_API_TOKEN}` },
+            headers,
             body: JSON.stringify({
-                query: `mutation { customDomainCreate(input: { serviceId: "${RAILWAY_SERVICE_ID}", environmentId: "${RAILWAY_ENVIRONMENT_ID}", domain: "${domain}" }) { id domain } }`,
+                query: `mutation customDomainCreate($input: CustomDomainCreateInput!) {
+                    customDomainCreate(input: $input) {
+                        id
+                        domain
+                        status {
+                            dnsRecords {
+                                hostlabel
+                                requiredValue
+                                status
+                            }
+                        }
+                    }
+                }`,
+                variables: {
+                    input: {
+                        projectId: RAILWAY_PROJECT_ID,
+                        serviceId: RAILWAY_SERVICE_ID,
+                        environmentId: RAILWAY_ENVIRONMENT_ID,
+                        domain: domain,
+                        targetPort: parseInt(PORT) || 3001,
+                    }
+                }
             }),
         });
         const createData = await createRes.json();
+        
         if (createData?.errors) {
             const errMsg = createData.errors.map(e => e.message).join(', ');
-            if (errMsg.toLowerCase().includes('already') || errMsg.toLowerCase().includes('exists')) return { success: true, reason: 'already_registered' };
+            // Domain already registered is fine
+            if (errMsg.toLowerCase().includes('already') || errMsg.toLowerCase().includes('exists') || errMsg.toLowerCase().includes('duplicate')) {
+                console.log(`[Railway] ℹ️ Domain ${domain} already registered.`);
+                return { success: true, reason: 'already_registered' };
+            }
             console.error(`[Railway] ❌ Error:`, errMsg);
             return { success: false, reason: errMsg };
         }
-        console.log(`[Railway] ✅ Domain ${domain} registered! SSL auto-provisioned.`);
-        return { success: true, data: createData?.data?.customDomainCreate };
+        
+        const result = createData?.data?.customDomainCreate;
+        console.log(`[Railway] ✅ Domain ${domain} registered! SSL will be auto-provisioned.`);
+        if (result?.status?.dnsRecords) {
+            console.log(`[Railway] 📋 DNS Records:`, JSON.stringify(result.status.dnsRecords, null, 2));
+        }
+        return { success: true, data: result };
     } catch (err) {
         console.error(`[Railway] ❌ API error:`, err.message);
         return { success: false, reason: err.message };
@@ -591,7 +623,16 @@ app.post('/api/domains/:id/verify', async (req, res) => {
 });
 
 app.get('/api/server-info', (req, res) => {
-    res.json({ hostname: SERVER_HOSTNAME });
+    res.json({ 
+        hostname: SERVER_HOSTNAME,
+        railway: {
+            configured: !!(RAILWAY_API_TOKEN && RAILWAY_SERVICE_ID && RAILWAY_ENVIRONMENT_ID && RAILWAY_PROJECT_ID),
+            token: RAILWAY_API_TOKEN ? '✅' : '❌',
+            serviceId: RAILWAY_SERVICE_ID ? '✅' : '❌',
+            environmentId: RAILWAY_ENVIRONMENT_ID ? '✅' : '❌',
+            projectId: RAILWAY_PROJECT_ID ? '✅' : '❌',
+        }
+    });
 });
 
 // ── Leads ──
