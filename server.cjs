@@ -327,23 +327,33 @@ app.put('/api/admin/subscription/:userId', requireAdmin, (req, res) => {
 });
 
 // ── Custom Domain Resolution Middleware ──
-// Checks if the incoming Host header matches a verified custom domain
+// Custom domain middleware — serves quiz directly on custom domains
 app.use((req, res, next) => {
     // Skip API routes and uploads
     if (req.path.startsWith('/api/') || req.path.startsWith('/uploads/')) return next();
 
     const host = (req.headers.host || '').split(':')[0].toLowerCase();
-    // Skip localhost and known app domains
-    if (!host || host === 'localhost' || host === '127.0.0.1') return next();
+    const serverHost = (SERVER_HOSTNAME || '').split(':')[0].toLowerCase();
+    
+    // Skip localhost, known app domains, and the main server hostname
+    if (!host || host === 'localhost' || host === '127.0.0.1' || host === serverHost || host.includes('.railway.app')) return next();
 
     const domainRow = db.prepare('SELECT quiz_id, status FROM domains WHERE domain = ?').get(host);
     if (domainRow && domainRow.status === 'verified') {
-        // Inject quizId so the SPA can load the right quiz
-        req.customDomainQuizId = domainRow.quiz_id;
-        // For SPA: serve index.html with quiz context
-        if (!req.path.startsWith('/assets/') && !req.path.match(/\.[a-z]{2,4}$/i)) {
-            // Rewrite to serve the player page
-            req.url = `/q/${domainRow.quiz_id}${req.url === '/' ? '' : req.url}`;
+        // For static assets, let them through
+        if (req.path.startsWith('/assets/') || req.path.match(/\.[a-z]{2,4}$/i)) return next();
+        
+        // For page requests: serve index.html with injected quiz context
+        const distPath = path.join(__dirname, 'dist');
+        const indexPath = path.join(distPath, 'index.html');
+        if (fs.existsSync(indexPath)) {
+            let html = fs.readFileSync(indexPath, 'utf8');
+            // Inject quiz ID so the React app knows to show the player
+            html = html.replace(
+                '</head>',
+                `<script>window.__QUIZ_DOMAIN_ID__="${domainRow.quiz_id}";window.__QUIZ_DOMAIN__="${host}";</script>\n</head>`
+            );
+            return res.type('html').send(html);
         }
     }
     next();

@@ -1705,8 +1705,9 @@ function ClonedPageBlock({ html, fullCode, onAdvance, btnStyle, buttonActions, p
 }
 
 // ═══ MAIN COMPONENT ═══
-export default function Player() {
-  const { id } = useParams();
+export default function Player({ domainQuizId }) {
+  const params = useParams();
+  const id = domainQuizId || params.id;
   const navigate = useNavigate();
   const [quiz, setQuiz] = useState(null);
   const [notFound, setNotFound] = useState(false);

@@ -21,6 +21,12 @@ function ProtectedRoute({ children, adminOnly = false }) {
 function AppShell() {
   const location = useLocation();
 
+  // Custom domain: server injected quiz ID — show Player for all routes
+  const domainQuizId = window.__QUIZ_DOMAIN_ID__;
+  if (domainQuizId) {
+    return <Player domainQuizId={domainQuizId} />;
+  }
+
   return (
     <>
       <Routes>
