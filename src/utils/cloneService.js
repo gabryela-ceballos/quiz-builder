@@ -12,6 +12,8 @@ function buildPlayerQuiz(extracted) {
         if (p.textColor) page.textColor = p.textColor;
         if (p.optionLayout) page.optionLayout = p.optionLayout;
         if (p.imageUrl) page.imageUrl = p.imageUrl;
+        // Preserve screenshot for the clone review UI
+        if (p.screenshot) page.screenshot = p.screenshot;
         if (page.options) {
             page.options = page.options.map((o, j) => {
                 if (typeof o === 'string') return { text: o, emoji: '', weight: j + 1 };
@@ -59,6 +61,12 @@ function buildPlayerQuiz(extracted) {
         welcome: extracted.welcome || { headline: extracted.quizName || 'Quiz', subheadline: '', cta: 'Começar →' },
         pages,
         clonedCSS: extracted.clonedCSS || null,
+        // Clone v2
+        sourceUrl: extracted.sourceUrl || '',
+        graph: extracted.graph || null,
+        cloneDesign: extracted.cloneDesign || {},
+        bgColor: extracted.bgColor || '',
+        contentFont: extracted.contentFont || '',
         questions,
         results,
         collectLead: extracted.collectLead ?? true,
@@ -69,14 +77,14 @@ function buildPlayerQuiz(extracted) {
 }
 
 // ═══ Clone via Job-based polling (survives standby/disconnect) ═══
-export async function cloneAndOptimize(url, niche, mode, productDescription, onProgress, cloneLang) {
+export async function cloneAndOptimize(url, niche, mode, productDescription, onProgress, cloneLang, options = {}) {
     if (!url?.trim()) throw new Error('URL inválida');
 
     // 1. Start the clone job on the server
     const startRes = await fetch(`${API_BASE}/api/clone-start`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: url.trim(), lang: (cloneLang && cloneLang !== 'original') ? cloneLang : null }),
+        body: JSON.stringify({ url: url.trim(), lang: (cloneLang && cloneLang !== 'original') ? cloneLang : null, options }),
     });
 
     if (!startRes.ok) {
@@ -141,4 +149,17 @@ export async function cloneAndOptimize(url, niche, mode, productDescription, onP
 // ═══ Clone from URL (shortcut) ═══
 export async function cloneFromUrl(url, onProgress) {
     return cloneAndOptimize(url, 'outro', 'clone_only', '', onProgress);
+}
+
+// ═══ Re-clone a single page (replays the recorded path) ═══
+export async function recloneOnePage(sourceUrl, path, index) {
+    const token = localStorage.getItem('inlead_token');
+    const res = await fetch(`${API_BASE}/api/clone-page`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ url: sourceUrl, path, index }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || 'Erro ao re-clonar a página');
+    return data.page;
 }

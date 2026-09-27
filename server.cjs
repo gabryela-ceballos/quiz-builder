@@ -10,6 +10,11 @@ const bcrypt = require('bcryptjs');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
+// Clone v2 modules
+const { makeCapture } = require('./clone/capture.cjs');
+const { annotatePage } = require('./clone/annotate.cjs');
+const { fingerprint: cloneFingerprint } = require('./clone/walker.cjs');
+const { enhanceClone, recloneSinglePage } = require('./clone/enhance.cjs');
 
 // ── Database ──
 const dbDir = path.join(__dirname, 'data');
@@ -166,11 +171,6 @@ function requireAdmin(req, res, next) {
         next();
     });
 }
-
-// ── Auth endpoints ──
-app.post('/api/auth/register', (req, res) => {
-    const { name, email, password } = req.body;
-    if (!name || !email || !password) return res.status(400).json({ error: 'Nome, email e senha obrigatórios' });
 // Owner, admin or collaborator (shares) of a quiz. Legacy quizzes without owner stay accessible to logged-in users.
 function canAccessQuiz(user, quizId) {
     if (!user) return false;
@@ -180,6 +180,11 @@ function canAccessQuiz(user, quizId) {
     if (!row.user_id || row.user_id === user.id) return true;
     return !!db.prepare('SELECT 1 FROM shares WHERE quiz_id = ? AND shared_with = ?').get(quizId, String(user.email || '').toLowerCase());
 }
+
+// ── Auth endpoints ──
+app.post('/api/auth/register', (req, res) => {
+    const { name, email, password } = req.body;
+    if (!name || !email || !password) return res.status(400).json({ error: 'Nome, email e senha obrigatórios' });
     if (password.length < 4) return res.status(400).json({ error: 'Senha deve ter pelo menos 4 caracteres' });
 
     const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(email.toLowerCase().trim());
@@ -896,6 +901,16 @@ app.get('/api/railway-debug', requireAdmin, async (req, res) => {
 // ── Leads ──
 app.post('/api/leads', (req, res) => {
     const { quizId, ...leadData } = req.body;
+    // v2 quizzes send a sessionId so a lead captured mid-quiz is updated as the visitor keeps answering
+    if (leadData.sessionId) {
+        const existing = db.prepare("SELECT id, data FROM leads WHERE quiz_id = ? AND json_extract(data, '$.sessionId') = ?").get(quizId, String(leadData.sessionId));
+        if (existing) {
+            const prev = JSON.parse(existing.data || '{}');
+            const merged = { ...prev, ...Object.fromEntries(Object.entries(leadData).filter(([, v]) => v !== '' && v !== null && v !== undefined)) };
+            db.prepare('UPDATE leads SET data = ? WHERE id = ?').run(JSON.stringify(merged), existing.id);
+            return res.json({ ok: true, updated: true });
+        }
+    }
     db.prepare('INSERT INTO leads (quiz_id, data) VALUES (?, ?)').run(quizId, JSON.stringify(leadData));
     res.json({ ok: true });
 });
@@ -976,11 +991,16 @@ if (!OPENAI_KEY) {
 console.log(`[Server] OpenAI Key: ${OPENAI_KEY ? `SET (${OPENAI_KEY.slice(0, 8)}...${OPENAI_KEY.slice(-4)})` : '⚠️ NOT SET — translation will NOT work!'}`);
 console.log(`[Server] Env vars checked: VITE_OPENAI_API_KEY=${process.env.VITE_OPENAI_API_KEY ? 'SET' : 'UNSET'}, OPENAI_KEY=${process.env.OPENAI_KEY ? 'SET' : 'UNSET'}, OPENAI_API_KEY=${process.env.OPENAI_API_KEY ? 'SET' : 'UNSET'}`);
 
-async function callOpenAI(prompt, { system = '', temperature = 0.7, maxTokens = 4000 } = {}) {
+async function callOpenAI(prompt, { system = '', temperature = 0.7, maxTokens = 4000, imageB64 = '' } = {}) {
     if (!OPENAI_KEY) throw new Error('API key não configurada');
     const messages = [];
     if (system) messages.push({ role: 'system', content: system });
-    messages.push({ role: 'user', content: prompt });
+    messages.push({
+        role: 'user',
+        content: imageB64
+            ? [{ type: 'text', text: prompt }, { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${imageB64}`, detail: 'low' } }]
+            : prompt,
+    });
 
     const res = await fetch(OPENAI_URL, {
         method: 'POST',
@@ -1665,7 +1685,7 @@ setInterval(() => {
 
 // Start a clone job
 app.post('/api/clone-start', (req, res) => {
-    const { url, lang } = req.body;
+    const { url, lang, options: cloneOpts } = req.body;
     if (!url) return res.status(400).json({ error: 'URL obrigatória' });
 
     const jobId = 'cj_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -1680,7 +1700,7 @@ app.post('/api/clone-start', (req, res) => {
     cloneJobs.set(jobId, job);
 
     // Run clone in background (not awaited)
-    runCloneJob(jobId, url, lang || null).catch(err => {
+    runCloneJob(jobId, url, lang || null, cloneOpts || {}).catch(err => {
         const j = cloneJobs.get(jobId);
         if (j) { j.status = 'error'; j.error = err.message; }
     });
@@ -1707,7 +1727,7 @@ app.get('/api/clone-status/:jobId', (req, res) => {
 });
 
 // The actual clone logic (runs in background)
-async function runCloneJob(jobId, url, targetLang) {
+async function runCloneJob(jobId, url, targetLang, opts = {}) {
     const job = cloneJobs.get(jobId);
     if (!job) return;
 
@@ -1723,7 +1743,7 @@ async function runCloneJob(jobId, url, targetLang) {
             }
         };
 
-        const quizResult = await runCloneScrape(url, targetLang, send);
+        const quizResult = await runCloneScrape(url, targetLang, send, opts);
 
         job.result = quizResult;
         job.status = 'done';
@@ -1736,6 +1756,25 @@ async function runCloneJob(jobId, url, targetLang) {
         addProgress('error', `❌ ${err.message}`, -1);
     }
 }
+
+// Re-clone a single page of a cloned quiz (replays the recorded path)
+app.post('/api/clone-page', requireAuth, async (req, res) => {
+    const { url, path: clonePath, index } = req.body || {};
+    if (!url || !Array.isArray(clonePath) || typeof index !== 'number') return res.status(400).json({ error: 'url, path e index são obrigatórios' });
+    let browser;
+    try {
+        const puppeteer = require('puppeteer');
+        const execPath = process.env.PUPPETEER_EXECUTABLE_PATH || null;
+        browser = await puppeteer.launch({ headless: 'new', ...(execPath ? { executablePath: execPath } : {}), args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-web-security', '--disable-gpu'] });
+        const sessionId = 'reclone_' + Date.now().toString(36);
+        const page = await recloneSinglePage({ browser, url, path: clonePath, index, sessionId, uploadsDir, callOpenAI: OPENAI_KEY ? callOpenAI : null });
+        res.json({ page });
+    } catch (err) {
+        res.status(500).json({ error: err.message || 'Erro ao re-clonar' });
+    } finally {
+        if (browser) await browser.close().catch(() => { });
+    }
+});
 
 app.get('/api/clone-stream', async (req, res) => {
     const url = req.query.url;
@@ -1786,7 +1825,7 @@ app.get('/api/clone-stream', async (req, res) => {
 });
 
 // ═══ Core clone scraping logic — used by both runCloneJob and /api/clone-stream ═══
-async function runCloneScrape(url, targetLang, send) {
+async function runCloneScrape(url, targetLang, send, opts = {}) {
     const cloneSessionId = 'clone_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
     let browser;
     try {
@@ -2219,599 +2258,51 @@ async function runCloneScrape(url, targetLang, send) {
             }
         };
 
-        // ── Extract ALL CSS from the page ONCE (before the loop) ──
-        const cachedCSS = await pg.evaluate(() => {
-            let cssText = '';
+        // ── Page capture (CSS cache, HTML serialisation, asset download) lives in clone/capture.cjs ──
+        const capture = await makeCapture(pg, { sessionId: cloneSessionId, uploadsDir });
+        const { cachedCSS, extractPageHTML } = capture;
+
+        // Record what the crawler clicks on each page (used to replay the path for branches / re-clone)
+        const clickLog = [];
+        const origMouseClick = pg.mouse.click.bind(pg.mouse);
+        pg.mouse.click = async (x, y, o) => {
             try {
-                for (const sheet of document.styleSheets) {
-                    try {
-                        for (const rule of sheet.cssRules) {
-                            cssText += rule.cssText + '\n';
-                        }
-                    } catch (e) { /* cross-origin stylesheet, skip */ }
-                }
-            } catch (e) { }
+                const info = await pg.evaluate((px, py) => {
+                    const el = document.elementFromPoint(px, py);
+                    const r = el && el.closest('[data-qf-role]');
+                    return r ? { role: r.getAttribute('data-qf-role'), text: (r.innerText || '').trim().slice(0, 160) } : { role: '', text: ((el && el.innerText) || '').trim().slice(0, 160) };
+                }, x, y);
+                clickLog.push({ page: allPages.length - 1, ...info });
+            } catch { /* ignore */ }
+            return origMouseClick(x, y, o);
+        };
 
-            // Extract CSS variables from inline style tags
-            let cssVars = ':root {\n';
-            for (const s of document.querySelectorAll('style')) {
-                const txt = s.textContent || '';
-                const varMatches = txt.matchAll(/--([\w-]+)\s*:\s*([^;]+)/g);
-                for (const m of varMatches) {
-                    cssVars += `  --${m[1]}: ${m[2]};\n`;
-                }
-            }
-            cssVars += '}\n';
-
-            const bodyBg = getComputedStyle(document.body).backgroundColor;
-            const bodyColor = getComputedStyle(document.body).color;
-            const bodyFont = getComputedStyle(document.body).fontFamily;
-
-            return { cssText, cssVars, bodyBg, bodyColor, bodyFont };
-        });
-        console.log('[Clone-Stream] CSS extracted, length:', cachedCSS.cssText.length);
-
-        // ── Per-page HTML extractor — combines cached CSS with page innerHTML ──
-        // ── Extract CSS @keyframes from all stylesheets ──
-        const keyframesCSS = await pg.evaluate(() => {
-            let kf = '';
+        // Annotate (roles, media, outline) BEFORE serialising so the HTML keeps data-qf-* attributes
+        const capturePageFull = async (index) => {
+            let ann = null;
+            try { ann = await pg.evaluate(annotatePage); } catch (e) { console.log('[Clone] annotate failed:', e.message); }
+            let pageHTML = '', fullCode = '', canvasUrls = {};
             try {
-                for (const sheet of document.styleSheets) {
-                    try {
-                        for (const rule of sheet.cssRules) {
-                            if (rule.type === CSSRule.KEYFRAMES_RULE) {
-                                kf += rule.cssText + '\n';
-                            }
-                        }
-                    } catch {}
-                }
-            } catch {}
-            return kf;
-        });
-        console.log('[Clone-Stream] Keyframes extracted, length:', keyframesCSS.length);
-
-        const extractPageHTML = async () => {
-            // ── Part 1: Editable HTML (lightweight, for Builder) ──
-            let innerHTML = await pg.evaluate(() => {
-                const container = document.querySelector('.main-content, main, [role="main"], #app, #root, #__next') || document.body;
-                const contentEl = container.querySelector('[class*="main-content"]') || container;
-                
-                // Strip popups, notifications, urgency banners, cookie banners before extraction
-                const popupSelectors = [
-                    '[class*="popup"]', '[class*="modal"]', '[class*="overlay"]',
-                    '[class*="notification"]', '[class*="banner"]', '[class*="toast"]',
-                    '[class*="cookie"]', '[class*="consent"]', '[class*="social-proof"]',
-                    '[class*="urgency"]', '[class*="fomo"]', '[class*="countdown"]',
-                    '[class*="alert"]', '[class*="snackbar"]',
-                ];
-                const allPopups = contentEl.querySelectorAll(popupSelectors.join(','));
-                allPopups.forEach(el => {
-                    // Only remove if it looks like a floating element
-                    const cs = getComputedStyle(el);
-                    if (cs.position === 'fixed' || cs.position === 'absolute' || cs.zIndex > 100) {
-                        el.remove();
-                    }
-                });
-                // Also remove fixed-position elements that might be popups
-                document.querySelectorAll('*').forEach(el => {
-                    const cs = getComputedStyle(el);
-                    if (cs.position === 'fixed' && el.getBoundingClientRect().height < 200 && el.getBoundingClientRect().height > 20) {
-                        // Likely a notification/toast/banner
-                        const text = (el.textContent || '').toLowerCase();
-                        if (/atenci[oó]n|personas|acaban|urgente|oferta|promo|cookie|notification|alert/i.test(text)) {
-                            el.remove();
-                        }
-                    }
-                });
-                
-                contentEl.querySelectorAll('video').forEach(v => {
-                    v.setAttribute('playsinline', '');
-                    v.setAttribute('controls', '');
-                    if (v.src) v.setAttribute('src', v.src);
-                    v.querySelectorAll('source').forEach(s => { if (s.src) s.setAttribute('src', s.src); });
-                });
-                contentEl.querySelectorAll('iframe').forEach(iframe => {
-                    if (iframe.src) iframe.setAttribute('src', iframe.src);
-                });
-                return contentEl.innerHTML;
-            });
-
-            // ── Carousel/Slideshow detection and conversion ──
-            const carouselData = await pg.evaluate(() => {
-                const carousels = [];
-                // Look for carousel containers
-                const candidates = document.querySelectorAll(
-                    '[class*="swiper"], [class*="slick"], [class*="carousel"], [class*="slider"], [class*="slideshow"], [class*="gallery"]'
-                );
-                // Also check overflow-x containers
-                const allDivs = document.querySelectorAll('div, section');
-                const overflowContainers = [...allDivs].filter(el => {
-                    const cs = getComputedStyle(el);
-                    return (cs.overflowX === 'auto' || cs.overflowX === 'scroll' || cs.overflowX === 'hidden') &&
-                        el.scrollWidth > el.clientWidth + 20 && el.children.length > 1;
-                });
-
-                const allCarousels = new Set([...candidates, ...overflowContainers]);
-
-                for (const container of allCarousels) {
-                    const slides = [];
-                    // Get direct children or items with slide-like classes
-                    const items = container.querySelectorAll(
-                        '[class*="slide"], [class*="item"], [class*="card"]'
-                    );
-                    const slideElements = items.length > 1 ? items : container.children;
-
-                    for (const slide of slideElements) {
-                        const img = slide.querySelector('img');
-                        const text = slide.textContent?.trim();
-                        if (img?.src || (text && text.length > 0)) {
-                            slides.push({
-                                imgSrc: img?.src || '',
-                                imgAlt: img?.alt || '',
-                                html: slide.outerHTML,
-                                text: text?.substring(0, 200) || '',
-                            });
-                        }
-                    }
-
-                    if (slides.length > 1) {
-                        // Get container's approximate dimensions
-                        const rect = container.getBoundingClientRect();
-                        carousels.push({
-                            slides,
-                            width: Math.round(rect.width),
-                            height: Math.round(rect.height),
-                            outerHTML: container.outerHTML,
-                            // Get a unique identifier for this container
-                            id: container.id || container.className?.toString()?.substring(0, 60) || '',
-                        });
-                    }
-                }
-                return carousels;
-            });
-
-            // Convert carousels to CSS scroll-snap
-            if (carouselData.length > 0) {
-                for (const carousel of carouselData) {
-                    const slideHTML = carousel.slides.map((s, i) =>
-                        `<div style="flex:0 0 100%;scroll-snap-align:start;min-width:100%;box-sizing:border-box">${
-                            s.imgSrc
-                                ? `<img src="${s.imgSrc}" alt="${s.imgAlt}" style="width:100%;height:auto;display:block;border-radius:8px"/>`
-                                : s.html
-                        }</div>`
-                    ).join('');
-
-                    const dots = carousel.slides.map((_, i) =>
-                        `<span style="width:8px;height:8px;border-radius:50%;background:${i === 0 ? '#6366f1' : '#d1d5db'};display:inline-block"></span>`
-                    ).join('');
-
-                    const scrollSnapCarousel = `<div style="position:relative;width:100%;overflow:hidden;margin:8px 0">
-                        <div style="display:flex;overflow-x:auto;scroll-snap-type:x mandatory;-webkit-overflow-scrolling:touch;scrollbar-width:none;gap:0" class="clone-carousel">
-                            ${slideHTML}
-                        </div>
-                        <div style="display:flex;justify-content:center;gap:6px;padding:8px 0">${dots}</div>
-                        <style>.clone-carousel::-webkit-scrollbar{display:none}</style>
-                    </div>`;
-
-                    // Try to replace the original carousel HTML with our scroll-snap version
-                    // We use a distinctive substring from the original to find and replace
-                    const searchStr = carousel.outerHTML.substring(0, 200);
-                    const searchIdx = innerHTML.indexOf(searchStr);
-                    if (searchIdx >= 0) {
-                        // Find the end of the original carousel element
-                        const originalLen = carousel.outerHTML.length;
-                        innerHTML = innerHTML.substring(0, searchIdx) + scrollSnapCarousel + innerHTML.substring(searchIdx + originalLen);
-                    }
-                }
-            }
-
-            // Strip tracking from editable HTML
-            const stripTracking = (html) => html
-                .replace(/<script[^>]*>([\s\S]*?)<\/script>/gi, (match) => {
-                    const lower = match.toLowerCase();
-                    const t = ['fbq(', 'facebook.com/tr', 'fbevents.js', 'fb-pixel',
-                        'google-analytics', 'googletagmanager', 'gtag(', 'ga(', 'analytics.js', 'gtm.js',
-                        'hotjar', 'hj(', 'hjSiteSettings', 'tiktok.com/i18n/pixel', 'ttq.',
-                        'snap.licdn.com', 'linkedin.com/px', 'ads.reddit.com',
-                        'clarity.ms', 'clarity(', 'adsbygoogle', 'googlesyndication'];
-                    if (t.some(p => lower.includes(p.toLowerCase()))) return '';
-                    return match;
-                })
-                .replace(/<noscript[^>]*>[\s\S]*?<\/noscript>/gi, (match) => {
-                    const l = match.toLowerCase();
-                    if (l.includes('facebook.com') || l.includes('googletagmanager') || l.includes('pixel') || l.includes('analytics')) return '';
-                    return match;
-                })
-                .replace(/<img[^>]*(facebook\.com\/tr|google-analytics|googletagmanager)[^>]*\/?>/gi, '');
-
-            // ═══ DOWNLOAD EXTERNAL ASSETS LOCALLY ═══
-            const downloadCloneAssets = async (htmlStr, quizId) => {
-                const assetDir = path.join(uploadsDir, 'clone-assets', quizId);
-                if (!fs.existsSync(assetDir)) fs.mkdirSync(assetDir, { recursive: true });
-
-                // Extract all external URLs from HTML
-                const urlSet = new Set();
-                
-                // img src
-                const imgMatches = htmlStr.match(/(?:src|data-src)=["'](https?:\/\/[^"']+)["']/gi) || [];
-                imgMatches.forEach(m => {
-                    const url = m.match(/["'](https?:\/\/[^"']+)["']/)?.[1];
-                    if (url) urlSet.add(url);
-                });
-                
-                // CSS url() — background images, fonts, etc.
-                const cssUrlMatches = htmlStr.match(/url\(["']?(https?:\/\/[^"')]+)["']?\)/gi) || [];
-                cssUrlMatches.forEach(m => {
-                    const url = m.match(/url\(["']?(https?:\/\/[^"')]+)["']?\)/i)?.[1];
-                    if (url) urlSet.add(url);
-                });
-                
-                // link href (CSS files)
-                const linkMatches = htmlStr.match(/<link[^>]+href=["'](https?:\/\/[^"']+\.css[^"']*)["']/gi) || [];
-                linkMatches.forEach(m => {
-                    const url = m.match(/href=["'](https?:\/\/[^"']+)["']/)?.[1];
-                    if (url) urlSet.add(url);
-                });
-
-                // Filter: skip tracking pixels, fonts, and JS files
-                const skipPatterns = [
-                    /facebook\.com/i, /google-analytics/i, /googletagmanager/i,
-                    /hotjar/i, /tiktok/i, /clarity\.ms/i, /linkedin\.com/i,
-                    /\.js(\?|$)/i, /\.woff2?(\?|$)/i, /\.ttf(\?|$)/i, /\.eot(\?|$)/i,
-                    /data:image/i, /pixel/i, /tracker/i, /beacon/i
-                ];
-                
-                const urls = [...urlSet].filter(u => !skipPatterns.some(p => p.test(u)));
-                
-                // Limit to 30 assets per page to avoid overwhelming
-                const limitedUrls = urls.slice(0, 30);
-                console.log(`[CloneAssets] Downloading ${limitedUrls.length} assets for quiz ${quizId}...`);
-                
-                const urlMap = {}; // original URL → local path
-                
-                const downloads = limitedUrls.map(async (url) => {
-                    try {
-                        const crypto = require('crypto');
-                        const urlHash = crypto.createHash('md5').update(url).digest('hex').substring(0, 12);
-                        const extMatch = url.match(/\.(\w{2,5})(?:\?|$)/);
-                        const ext = extMatch ? extMatch[1] : 'bin';
-                        const safeExt = ['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'avif', 'ico', 'css'].includes(ext.toLowerCase()) ? ext.toLowerCase() : 'bin';
-                        const filename = `${urlHash}.${safeExt}`;
-                        const filepath = path.join(assetDir, filename);
-                        
-                        // Skip if already downloaded
-                        if (fs.existsSync(filepath)) {
-                            urlMap[url] = `/uploads/clone-assets/${quizId}/${filename}`;
-                            return;
-                        }
-                        
-                        const controller = new AbortController();
-                        const timeout = setTimeout(() => controller.abort(), 8000);
-                        
-                        const res = await fetch(url, {
-                            signal: controller.signal,
-                            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
-                        });
-                        clearTimeout(timeout);
-                        
-                        if (!res.ok) return;
-                        
-                        // Check content length (skip files > 5MB)
-                        const contentLength = parseInt(res.headers.get('content-length') || '0');
-                        if (contentLength > 5 * 1024 * 1024) return;
-                        
-                        const buffer = Buffer.from(await res.arrayBuffer());
-                        fs.writeFileSync(filepath, buffer);
-                        urlMap[url] = `/uploads/clone-assets/${quizId}/${filename}`;
-                    } catch (err) {
-                        // Silent fail — asset will keep original URL
-                    }
-                });
-                
-                await Promise.allSettled(downloads);
-                
-                console.log(`[CloneAssets] Downloaded ${Object.keys(urlMap).length}/${limitedUrls.length} assets`);
-                
-                // Replace all URLs in HTML
-                let result = htmlStr;
-                for (const [originalUrl, localPath] of Object.entries(urlMap)) {
-                    // Escape special regex characters in URL
-                    const escaped = originalUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-                    result = result.replace(new RegExp(escaped, 'g'), localPath);
-                }
-                
-                // Remove <base> tag since we no longer need it (all URLs are local now)
-                result = result.replace(/<base[^>]*>/gi, '');
-                
-                return result;
-            };
-
-            innerHTML = stripTracking(innerHTML);
-            const allCSS = cachedCSS.cssVars + cachedCSS.cssText + (keyframesCSS || '');
-
-            // ── Inject interactive widgets for known patterns ──
-            // Detect pages with sliders (weight, height, age) and inject working HTML range inputs
-            const pageText = await pg.evaluate(() => document.body?.innerText || '');
-            const isSliderPage = /qual.*peso|weight|qual.*altura|height|quantos.*anos|age|arraste|drag|deslize/i.test(pageText);
-
-            let widgetScript = '';
-            if (isSliderPage) {
-                // Extract the current value shown on the page
-                const sliderInfo = await pg.evaluate(() => {
-                    // Look for displayed value (like "70kg", "165cm")
-                    const numEls = [...document.querySelectorAll('span, div, p, strong')].filter(el => {
-                        const t = (el.innerText || '').trim();
-                        return /^\d{2,3}\s*(kg|cm|lb|ft|anos|years)?$/i.test(t) && el.getBoundingClientRect().height > 0;
-                    });
-                    const valEl = numEls[0];
-                    const rawVal = valEl ? parseInt((valEl.innerText || '').match(/\d+/)?.[0] || '70') : 70;
-                    const unit = valEl ? ((valEl.innerText || '').match(/(kg|cm|lb|ft|anos|years)/i)?.[0] || '') : '';
-
-                    // Detect if height or weight
-                    const fullText = document.body.innerText.toLowerCase();
-                    const isHeight = /altura|height|cm/i.test(fullText);
-                    const isAge = /anos|age|idade/i.test(fullText);
-
-                    return {
-                        value: rawVal,
-                        unit: unit,
-                        min: isHeight ? 120 : (isAge ? 14 : 30),
-                        max: isHeight ? 220 : (isAge ? 90 : 200),
-                        isHeight,
-                        isAge
-                    };
-                });
-
-                widgetScript = `
-<div data-clone-slider style="padding:10px 20px;margin:10px 0;text-align:center">
-  <div style="font-size:2.2rem;font-weight:700;margin-bottom:8px">
-    <span id="clone-slider-val">${sliderInfo.value}</span><span style="font-size:1.2rem;font-weight:400">${sliderInfo.unit}</span>
-  </div>
-  <input type="range" min="${sliderInfo.min}" max="${sliderInfo.max}" value="${sliderInfo.value}" id="clone-slider-input"
-    style="width:100%;height:6px;accent-color:var(--primary-color,#f59e0b);cursor:pointer;-webkit-appearance:none;background:linear-gradient(to right,#f59e0b 50%,#e5e7eb 50%);border-radius:3px"
-    oninput="document.getElementById('clone-slider-val').textContent=this.value" />
-  <div style="display:flex;justify-content:space-between;font-size:0.75rem;color:#999;margin-top:4px">
-    <span>${sliderInfo.min}</span><span>${sliderInfo.max}</span>
-  </div>
-</div>`;
-            }
-
-            let finalHTML = innerHTML;
-            // If it's a slider page, try to append the interactive widget near the existing slider visual
-            if (widgetScript) {
-                // Find the container that has slider-like elements and add ours
-                finalHTML = await pg.evaluate((args) => {
-                    const { innerHTML: html, widget } = args;
-                    const temp = document.createElement('div');
-                    temp.innerHTML = html;
-
-                    // Remove static slider elements that don't work
-                    const staticSliders = temp.querySelectorAll('[class*=slider], [class*=ruler], [class*=range], [class*=dial], [class*=scale]');
-                    staticSliders.forEach(el => el.style.display = 'none');
-
-                    // Find the CTA/continue button and insert slider before it
-                    const buttons = temp.querySelectorAll('button, a, [role=button]');
-                    let ctaBtn = null;
-                    for (const btn of buttons) {
-                        if (/continuar|continue|next|próximo/i.test(btn.textContent)) {
-                            ctaBtn = btn;
-                            break;
-                        }
-                    }
-
-                    if (ctaBtn && ctaBtn.parentElement) {
-                        const wrapper = document.createElement('div');
-                        wrapper.innerHTML = widget;
-                        ctaBtn.parentElement.insertBefore(wrapper, ctaBtn);
-                    }
-
-                    return temp.innerHTML;
-                }, { innerHTML: finalHTML, widget: widgetScript });
-            }
-
-            const editableCode = `<div class="cloned-page" style="background:${cachedCSS.bodyBg};color:${cachedCSS.bodyColor};font-family:${cachedCSS.bodyFont};min-height:100%;width:100%;overflow:hidden;box-sizing:border-box"><style>${allCSS}.cloned-page *{box-sizing:border-box}.cloned-page img{max-width:100%;height:auto}.cloned-page video{max-width:100%;height:auto}.cloned-page button,.cloned-page [role="button"]{cursor:pointer}.cloned-page a{text-decoration:none;color:inherit}[data-clone-slider] input[type=range]{-webkit-appearance:none;height:6px;border-radius:3px;outline:none}[data-clone-slider] input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:24px;height:24px;border-radius:50%;background:#f59e0b;cursor:pointer;box-shadow:0 2px 6px rgba(0,0,0,.2)}</style>${finalHTML}</div>`;
-
-            // ── Part 2: Full interactive HTML (with all JS, for Player iframe) ──
-            let fullDoc = '';
-            try {
-                const pageUrl = pg.url();
-                const origin = new URL(pageUrl).origin;
-                fullDoc = await pg.content();
-                fullDoc = stripTracking(fullDoc);
-
-                // Inject <base> tag for correct relative URL resolution
-                if (!fullDoc.includes('<base ')) {
-                    fullDoc = fullDoc.replace(/<head([^>]*)>/i, `<head$1><base href="${origin}/" target="_self">`);
-                }
-
-                // Inject navigation bridge script — handles ALL interactive elements
-                const navBridge = `<script data-clone-nav>
-(function(){
-  var advanceTimer = null;
-  function advance() {
-    if (advanceTimer) return;
-    advanceTimer = setTimeout(function(){ advanceTimer = null; }, 800);
-    window.parent.postMessage({type:'clone-advance'},'*');
-  }
-
-  // Intercept all clicks on interactive elements
-  document.addEventListener('click', function(e) {
-    var target = e.target;
-    for (var i = 0; i < 12; i++) {
-      if (!target || target === document.body || target === document.documentElement) break;
-      var tag = target.tagName ? target.tagName.toLowerCase() : '';
-
-      // SKIP: let interactive widgets work naturally (sliders, inputs, toggles)
-      if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
-      if (tag === 'label' && target.querySelector && target.querySelector('input')) return;
-      // Skip range slider containers
-      var cls = (target.className || '').toString().toLowerCase();
-      if (cls.includes('slider') || cls.includes('range') || cls.includes('dial') || cls.includes('knob') || cls.includes('thumb') || cls.includes('ruler') || cls.includes('scale')) return;
-
-      // CATCH: buttons, links, options, clickable cards
-      var role = target.getAttribute ? (target.getAttribute('role') || '') : '';
-      var isBtn = tag === 'button' || tag === 'a' || role === 'button' || role === 'option' ||
-        cls.includes('btn') || cls.includes('button') || cls.includes('cta') ||
-        cls.includes('option') || cls.includes('choice') || cls.includes('answer') ||
-        cls.includes('card') || cls.includes('select');
-
-      // Also catch styled divs/spans with cursor:pointer that look like buttons
-      if (!isBtn && target.style) {
-        var cursor = window.getComputedStyle ? window.getComputedStyle(target).cursor : '';
-        if (cursor === 'pointer' && target.textContent && target.textContent.trim().length > 1 && target.textContent.trim().length < 200) {
-          isBtn = true;
-        }
-      }
-
-      if (isBtn) {
-        // Let the original handler run briefly for visual feedback, then advance
-        setTimeout(function() { advance(); }, 350);
-        return;
-      }
-      target = target.parentElement;
-    }
-  }, false);
-
-  // Intercept form submissions
-  document.addEventListener('submit', function(e) {
-    e.preventDefault();
-    advance();
-  }, true);
-
-  // MutationObserver: detect SPA page transitions (large DOM changes)
-  var mainEl = document.querySelector('#__next, #app, #root, main, [role=main]') || document.body;
-  var lastContent = (mainEl.textContent || '').slice(0, 200);
-  var observer = new MutationObserver(function(mutations) {
-    var currentContent = (mainEl.textContent || '').slice(0, 200);
-    if (currentContent !== lastContent) {
-      lastContent = currentContent;
-      // Significant content change = page transition
-      advance();
-    }
-  });
-  observer.observe(mainEl, { childList: true, subtree: true });
-
-  // Intercept SPA navigation (pushState/replaceState)
-  var origPush = history.pushState;
-  var origReplace = history.replaceState;
-  history.pushState = function() { origPush.apply(this, arguments); advance(); };
-  history.replaceState = function() { origReplace.apply(this, arguments); advance(); };
-  window.addEventListener('popstate', function() { advance(); });
-})();
-</script>`;
-                fullDoc = fullDoc.replace('</body>', navBridge + '</body>');
-
-                // Add responsive viewport if missing
-                if (!fullDoc.includes('viewport')) {
-                    fullDoc = fullDoc.replace(/<head([^>]*)>/i, '<head$1><meta name="viewport" content="width=device-width,initial-scale=1">');
-                }
-
-                // ── Inject chart animation CSS + detection ──
-                const chartAnimCSS = `<style data-clone-charts>
-@keyframes chartBarGrow { from { transform: scaleY(0); } to { transform: scaleY(1); } }
-@keyframes chartFadeIn { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
-@keyframes countUp { from { opacity: 0; } to { opacity: 1; } }
-[data-clone-chart] { cursor: pointer; transition: outline 0.15s; }
-[data-clone-chart]:hover { outline: 2px dashed #6c63ff; outline-offset: 4px; }
-[data-clone-bar] { 
-    transform-origin: bottom center; 
-    animation: chartBarGrow 1s ease-out forwards;
-}
-[data-clone-bar-label] {
-    animation: chartFadeIn 0.8s ease-out forwards;
-    animation-delay: 0.5s;
-    opacity: 0;
-}
-</style>`;
-                fullDoc = fullDoc.replace('</head>', chartAnimCSS + '</head>');
-
-                // Inject a script that detects bar charts and marks them with data attributes
-                const chartDetectScript = `<script data-clone-chart-detect>
-(function() {
-    function detectCharts() {
-        // Find groups of colored siblings that look like bar charts
-        const allContainers = document.querySelectorAll('div, section');
-        allContainers.forEach(container => {
-            const children = [...container.children];
-            if (children.length < 2 || children.length > 10) return;
-            
-            // Check if children have distinct background colors and similar widths
-            let coloredChildren = 0;
-            let hasPercentage = false;
-            children.forEach(child => {
-                const style = getComputedStyle(child);
-                const bg = style.backgroundColor;
-                if (bg && bg !== 'rgba(0, 0, 0, 0)' && bg !== 'transparent' && bg !== 'rgb(255, 255, 255)') {
-                    coloredChildren++;
-                }
-                const text = (child.textContent || '').trim();
-                if (/\\d+%/.test(text)) hasPercentage = true;
-            });
-            
-            // If 2+ colored children with percentages, it's likely a bar chart
-            if (coloredChildren >= 2 && hasPercentage) {
-                container.setAttribute('data-clone-chart', 'bar');
-                container.setAttribute('data-clone-type', 'chart');
-                
-                // Mark individual bar elements
-                children.forEach((child, idx) => {
-                    const style = getComputedStyle(child);
-                    const bg = style.backgroundColor;
-                    if (bg && bg !== 'rgba(0, 0, 0, 0)' && bg !== 'transparent' && bg !== 'rgb(255, 255, 255)') {
-                        child.setAttribute('data-clone-bar', idx);
-                        child.style.animationDelay = (idx * 0.3) + 's';
-                        
-                        // Find percentage text inside
-                        const percentEl = [...child.querySelectorAll('*')].find(el => /\\d+%/.test(el.textContent?.trim()));
-                        if (percentEl) percentEl.setAttribute('data-clone-bar-label', idx);
-                    }
-                });
-            }
-        });
-        
-        // Also detect progress fill bars (thin colored bars that represent progress)
-        document.querySelectorAll('[style*="width:"], [style*="width :"]').forEach(el => {
-            const style = getComputedStyle(el);
-            const h = parseFloat(style.height);
-            const w = parseFloat(style.width);
-            const bg = style.backgroundColor;
-            if (h > 5 && h < 40 && w > 20 && bg && bg !== 'rgba(0, 0, 0, 0)' && bg !== 'transparent') {
-                const parent = el.parentElement;
-                if (parent && !parent.hasAttribute('data-clone-chart')) {
-                    parent.setAttribute('data-clone-chart', 'progress');
-                    parent.setAttribute('data-clone-type', 'chart');
-                    el.setAttribute('data-clone-bar', '0');
-                }
-            }
-        });
-    }
-    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', detectCharts);
-    else setTimeout(detectCharts, 100);
-})();
-</script>`;
-                fullDoc = fullDoc.replace('</body>', chartDetectScript + '</body>');
-
-                console.log('[Clone-Stream] Full doc captured, size:', Math.round(fullDoc.length / 1024), 'KB');
-            } catch (e) {
-                console.log('[Clone-Stream] Failed to capture full doc:', e.message);
-            }
-
-            // Download all external assets locally for independence
-            let localEditable = editableCode;
-            let localFullDoc = fullDoc || '';
-            try {
-                console.log('[CloneAssets] Processing assets for page...');
-                localEditable = await downloadCloneAssets(localEditable, cloneSessionId);
-                if (localFullDoc) localFullDoc = await downloadCloneAssets(localFullDoc, cloneSessionId);
-            } catch (assetErr) {
-                console.log('[CloneAssets] Asset download error (non-fatal):', assetErr.message);
-            }
-
-            return { editableCode: localEditable, fullCode: localFullDoc };
+                const r = await extractPageHTML(ann?.canvases || {});
+                pageHTML = r.editableCode; fullCode = r.fullCode; canvasUrls = r.canvasUrls || {};
+            } catch (e) { console.log('[Clone] HTML extraction failed for page', index, e.message); }
+            const shot = await capture.saveScreenshot(index);
+            if (ann) delete ann.canvases;
+            return { ann, pageHTML, fullCode, canvasUrls, screenshotBase64: shot.base64, screenshotUrl: shot.url };
         };
 
         let prevPageType = '';
+        const startHost = (() => { try { return new URL(pg.url()).host; } catch { return ''; } })();
+        try {
         for (let i = 0; i < MAX_PAGES; i++) {
+            // The quiz sent us to another site (checkout, WhatsApp…): that's the end of the funnel
+            try {
+                const host = new URL(pg.url()).host;
+                if (startHost && host && host !== startHost) {
+                    send('progress', { stage: 'done', msg: `🔗 O quiz levou para ${host} (fim do funil) — ${allPages.length} páginas clonadas`, pct: 85 });
+                    break;
+                }
+            } catch { /* ignore */ }
             // ── HARD TIMEOUT: stop after 5 minutes no matter what ──
             if (Date.now() - loopStartTime > LOOP_TIMEOUT_MS) {
                 console.log(`[Clone-Stream] ⏰ Hard timeout reached (${Math.round(LOOP_TIMEOUT_MS/1000)}s), stopping with ${allPages.length} pages`);
@@ -2897,20 +2388,8 @@ async function runCloneScrape(url, targetLang, send) {
                 collectLead = type === 'lead' ? true : collectLead;
                 
                 // ── STILL capture the HTML for the page ──
-                let pageHTML = '';
-                let fullCode = '';
-                try {
-                    const result = await extractPageHTML();
-                    pageHTML = result.editableCode;
-                    fullCode = result.fullCode;
-                } catch (e) {
-                    console.log('[Clone] HTML extraction failed for lead page', i, e.message);
-                }
-                let screenshotBase64 = '';
-                try {
-                    const screenshotBuf = await pg.screenshot({ type: 'jpeg', quality: 80 });
-                    screenshotBase64 = screenshotBuf.toString('base64');
-                } catch (e) { }
+                const cap = await capturePageFull(allPages.length);
+                const { pageHTML, fullCode, screenshotBase64 } = cap;
 
                 const title = screen.mainTitle || screen.texts?.[0] || '';
                 const pageObj = {
@@ -2922,6 +2401,10 @@ async function runCloneScrape(url, targetLang, send) {
                     _pageType: type,
                     _hash: pageHash,
                     _screenshot: screenshotBase64,
+                    screenshotUrl: cap.screenshotUrl,
+                    _ann: cap.ann,
+                    _fp: cloneFingerprint(cap.ann),
+                    _canvasUrls: cap.canvasUrls,
                 };
                 pageObj._title = pageTitle;
                 allPages.push(pageObj);
@@ -2990,23 +2473,9 @@ async function runCloneScrape(url, targetLang, send) {
                 await delay(1500);
                 console.log(`[Clone-Stream] 📝 Test data filled, looking for submit button...`);
             } else {
-                // Extract FULL HTML for pixel-perfect clone
-                let pageHTML = '';
-                let fullCode = '';
-                try {
-                    const result = await extractPageHTML();
-                    pageHTML = result.editableCode;
-                    fullCode = result.fullCode;
-                } catch (e) {
-                    console.log('[Clone] HTML extraction failed for page', i, e.message);
-                }
-
-                // Also take a screenshot  
-                let screenshotBase64 = '';
-                try {
-                    const screenshotBuf = await pg.screenshot({ type: 'jpeg', quality: 80 });
-                    screenshotBase64 = screenshotBuf.toString('base64');
-                } catch (e) { }
+                // Extract FULL HTML for pixel-perfect clone (+ annotations and screenshot)
+                const cap = await capturePageFull(allPages.length);
+                const { pageHTML, fullCode, screenshotBase64 } = cap;
 
                 const title = screen.mainTitle || screen.texts?.[0] || '';
 
@@ -3023,6 +2492,10 @@ async function runCloneScrape(url, targetLang, send) {
                     _pageType: type,
                     _hash: pageHash,
                     _screenshot: screenshotBase64,
+                    screenshotUrl: cap.screenshotUrl,
+                    _ann: cap.ann,
+                    _fp: cloneFingerprint(cap.ann),
+                    _canvasUrls: cap.canvasUrls,
                 };
                 pageObj._title = pageTitle;
                 allPages.push(pageObj);
@@ -3930,16 +3403,46 @@ The viewport is 430x932 pixels (mobile). Return ONLY valid JSON.`
                 failedAdvanceCount = 0;
             }
         }
+        } catch (loopErr) {
+            // Keep what we already cloned instead of failing the whole job
+            if (!allPages.length) throw loopErr;
+            console.log('[Clone-Stream] Crawl stopped early:', loopErr.message);
+            send('progress', { stage: 'done', msg: `⚠️ O robô parou antes do fim (${allPages.length} páginas clonadas)`, pct: 85 });
+        }
+        // If the crawl ended on an external page, reopen the quiz for the extra passes
+        try { if (startHost && new URL(pg.url()).host !== startHost) await pg.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => { }); } catch { /* ignore */ }
+
+        // ═══ Clone v2: branches, dynamic content, native blocks (browser still open) ═══
+        let enhanced = { graph: null, design: {}, extraPages: [] };
+        try {
+            enhanced = await enhanceClone({
+                browser, url, allPages, clickLog, capture, send, sessionId: cloneSessionId, uploadsDir,
+                opts: { native: opts.native !== false, dynamic: opts.dynamic !== false, branches: !!opts.branches, ai: opts.ai !== false },
+                callOpenAI: OPENAI_KEY ? callOpenAI : null,
+            });
+            allPages.push(...enhanced.extraPages);
+        } catch (err) {
+            console.log('[Clone] enhance failed:', err.message);
+            send('progress', { stage: 'enhancing', msg: `⚠️ Etapa extra falhou: ${err.message}`, pct: -1 });
+        }
 
         await browser.close();
         browser = null;
 
         // Clean up internal metadata from pages + detect warnings
         allPages.forEach(p => {
+            delete p._ann;
+            delete p._canvasUrls;
+            p.fingerprint = p._fp; delete p._fp;
+            if (p._branch) { p.branch = p._branch; delete p._branch; }
             delete p._hash;
             p.clonePageType = p._pageType || 'choice';
             delete p._pageType;
-            delete p._screenshot;
+            // Promote screenshot to public field so the review UI can display it
+            if (p._screenshot) {
+                p.screenshot = p._screenshot;
+                delete p._screenshot;
+            }
 
             // ── Detect complex elements that may need review ──
             const fc = (p.fullCode || '').toLowerCase();
@@ -4119,6 +3622,34 @@ The viewport is 430x932 pixels (mobile). Return ONLY valid JSON.`
                 }
                 send('progress', { stage: 'translating', msg: `🌐 Traduzindo página ${pi + 1}/${allPages.length}...`, pct: 88 + Math.round((pi / allPages.length) * 8) });
             }
+            // Translate native blocks too (variables {{...}} are protected)
+            const TR_KEYS = ['content', 'text', 'title', 'headline', 'subtitle', 'subheadline', 'desc', 'cta', 'buttonText', 'body', 'caption', 'placeholder', 'label', 'minLabel', 'maxLabel', 'continueLabel', 'q', 'a'];
+            for (let pi = 0; pi < allPages.length; pi++) {
+                const page = allPages[pi];
+                if (!page.nativeBlocks?.length) continue;
+                const refs = [];
+                const visit = (obj) => {
+                    if (!obj || typeof obj !== 'object') return;
+                    if (Array.isArray(obj)) { obj.forEach((v, i) => { if (typeof v === 'string' && v.trim().length > 1) refs.push([obj, i]); else visit(v); }); return; }
+                    for (const [k, v] of Object.entries(obj)) {
+                        if (typeof v === 'string' && TR_KEYS.includes(k) && v.trim().length > 1 && /\p{L}/u.test(v)) refs.push([obj, k]);
+                        else if (k === 'items' || k === 'features' || k === 'options' || k === 'slides') visit(v);
+                    }
+                };
+                page.nativeBlocks.forEach(visit);
+                if (page.stepProps?.continueLabel) refs.push([page.stepProps, 'continueLabel']);
+                if (page.stepName) refs.push([page, 'stepName']);
+                if (!refs.length) continue;
+                const protect = refs.map(([o, k]) => { const vars = []; const t = String(o[k]).replace(/\{\{[^}]+\}\}/g, m => { vars.push(m); return `⟦${vars.length - 1}⟧`; }); return { t, vars }; });
+                const out = [];
+                for (let b = 0; b < protect.length; b += 25) out.push(...await translateBatch(protect.slice(b, b + 25).map(x => x.t), langName));
+                refs.forEach(([o, k], ri) => {
+                    const tr = out[ri];
+                    if (!tr) return;
+                    o[k] = tr.replace(/⟦(\d+)⟧/g, (m, n) => protect[ri].vars[Number(n)] || m);
+                });
+            }
+
             // Translate welcome data
             if (welcomeData) {
                 try {
@@ -4165,6 +3696,11 @@ The viewport is 430x932 pixels (mobile). Return ONLY valid JSON.`
                 { id: 'r2', name: 'Resultado B', description: 'Seu perfil indica...', cta: 'Ver recomendação →', minPct: 51, maxPct: 100 },
             ],
             collectLead,
+            // Clone v2
+            sourceUrl: url,
+            cloneOptions: opts,
+            graph: enhanced.graph,
+            cloneDesign: { ...(enhanced.design || {}), logoUrl: enhanced.design?.logoUrl || '' },
         };
 
         send('progress', { stage: 'building', msg: `🧱 Montando quiz com ${allPages.length} páginas...`, pct: 98 });

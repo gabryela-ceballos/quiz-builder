@@ -4,7 +4,7 @@ import { GripVertical, Plus, Trash2, Image as ImageIcon } from 'lucide-react';
 import { BLOCK_TYPES, ALERT_TYPES } from '../utils/blockTypes';
 
 // ── Individual block renderer ──
-function BlockRenderer({ block, pc }) {
+export function BlockRenderer({ block, pc }) {
     const layout = block.optionLayout || 'list';
     if (!block) return null;
 

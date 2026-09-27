@@ -58,6 +58,15 @@ export const BLOCK_TYPES = [
     { type: 'insight', label: 'Insight', icon: '💡', color: '#f1c40f', category: 'argumentation', desc: 'Dica educativa' },
     { type: 'social-proof', label: 'Prova Social', icon: '👥', color: '#1abc9c', category: 'argumentation', desc: 'Validação social' },
 
+    // ── v2 blocks ──
+    { type: 'text-input', label: 'Campo de texto', icon: 'Aa', color: '#6366f1', category: 'form', desc: 'Resposta curta' },
+    { type: 'rating', label: 'Avaliação', icon: '★', color: '#f59e0b', category: 'quiz', desc: 'Estrelas de 1 a 5' },
+    { type: 'nps', label: 'NPS', icon: '10', color: '#0ea5e9', category: 'quiz', desc: 'Nota de 0 a 10' },
+    { type: 'slider', label: 'Slider', icon: '⟷', color: '#8b5cf6', category: 'quiz', desc: 'Valor numa escala' },
+    { type: 'lottie', label: 'Animação Lottie', icon: '✨', color: '#8b5cf6', category: 'media', desc: 'Animação .json' },
+    { type: 'projection', label: 'Gráfico de projeção', icon: '📉', color: '#10b981', category: 'charts', desc: 'Atual → meta com data' },
+    { type: 'outcome', label: 'Resultado por pontos', icon: '🏆', color: '#e67e22', category: 'argumentation', desc: 'Mostra um resultado conforme a pontuação' },
+
     // ── Hidden (still work but not in palette) ──
     { type: 'likert', label: 'Escala', icon: '📊', color: '#e67e22', category: 'hidden', desc: 'Intensidade 1-5' },
     { type: 'statement', label: 'Afirmação', icon: '💬', color: '#3498db', category: 'hidden', desc: 'Concordo/Discordo' },
@@ -122,9 +131,37 @@ export const INSIGHT_STYLES = [
 ];
 
 export function createBlock(type) {
+    const block = createBlockRaw(type);
+    if (Array.isArray(block.options)) {
+        block.options = block.options.map(o => (o && typeof o === 'object' && !o.id ? { ...o, id: `o_${Math.random().toString(36).slice(2, 8)}` } : o));
+    }
+    return block;
+}
+
+function createBlockRaw(type) {
     const id = `blk_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
     const base = { id, type };
     switch (type) {
+        case 'text-input':
+            return { ...base, text: 'Qual é o seu nome?', placeholder: 'Digite aqui...', varName: 'nome', required: true };
+        case 'rating':
+            return { ...base, text: 'Como você avalia sua rotina hoje?', max: 5, icon: 'star', minLabel: 'Péssima', maxLabel: 'Excelente', autoAdvance: true, required: true };
+        case 'nps':
+            return { ...base, text: 'De 0 a 10, qual a chance de você nos indicar a um amigo?', minLabel: 'Nada provável', maxLabel: 'Muito provável', autoAdvance: true, required: true };
+        case 'slider':
+            return { ...base, text: 'Quantas horas você dorme por noite?', min: 0, max: 12, step: 1, defaultValue: 7, unit: 'h', minLabel: '', maxLabel: '', required: true };
+        case 'lottie':
+            return { ...base, src: '', loop: true, height: 220 };
+        case 'projection':
+            return { ...base, title: 'Sua projeção', from: '{{peso}}', to: '{{peso_meta}}', unit: 'kg', startLabel: 'Hoje', endLabel: "{{= data(7 * (peso - peso_meta), 'extenso')}}", badge: 'Meta' };
+        case 'outcome':
+            return {
+                ...base, title: 'Seu resultado', outcomes: [
+                    { id: 'r1', min: 0, max: 5, emoji: '🌱', title: 'Iniciante', text: 'Você está começando agora — com o método certo, os resultados vêm rápido.', ctaText: 'Quero começar →', ctaUrl: '' },
+                    { id: 'r2', min: 6, max: 10, emoji: '🔥', title: 'No caminho certo', text: 'Você já tem uma boa base. Falta só o empurrão final para chegar lá.', ctaText: 'Quero acelerar →', ctaUrl: '' },
+                    { id: 'r3', min: 11, max: '', emoji: '🏆', title: 'Avançado', text: 'Você está acima da média! Vamos levar isso para o próximo nível.', ctaText: 'Ver plano avançado →', ctaUrl: '' },
+                ],
+            };
         case 'choice':
             return {
                 ...base, text: 'Qual a questão a ser respondida?', desc: 'Digite aqui uma descrição de ajuda para introduzir o usuário à questão.',

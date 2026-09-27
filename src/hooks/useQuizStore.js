@@ -28,7 +28,7 @@ export async function getQuiz(id) {
     } catch (_) { return null; }
 }
 
-export async function saveQuiz(quiz) {
+export async function saveQuiz(quiz, { silent = false } = {}) {
     try {
         console.log('[saveQuiz] Sending POST to', `${API}/quizzes`, 'with quiz.id:', quiz.id);
         const res = await fetch(`${API}/quizzes`, {
@@ -40,13 +40,13 @@ export async function saveQuiz(quiz) {
         console.log('[saveQuiz] Response status:', res.status, 'data.id:', data?.id, 'data.error:', data?.error);
         if (!res.ok) {
             console.error('[saveQuiz] Server error:', data);
-            alert(`❌ Erro ao salvar: ${data?.error || res.statusText}`);
+            if (!silent) alert(`❌ Erro ao salvar: ${data?.error || res.statusText}`);
             return null;
         }
         return data;
     } catch (e) {
         console.error('Erro ao salvar quiz:', e);
-        alert('❌ Erro ao salvar quiz. Verifique se o servidor está rodando (node server.js).');
+        if (!silent) alert('❌ Erro ao salvar quiz. Verifique se o servidor está rodando (node server.js).');
         return null;
     }
 }

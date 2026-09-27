@@ -1,0 +1,91 @@
+/* blocks.css — v2 quiz renderer (editor canvas + live player) */
+
+.qv-root {
+  --qv-primary: #2563eb;
+  --qv-rgb: 37, 99, 235;
+  --qv-radius: 14px;
+  -webkit-font-smoothing: antialiased;
+}
+
+.qv-root *,
+.qv-root *::before,
+.qv-root *::after { box-sizing: border-box; }
+
+/* Option cards */
+.qv-opt {
+  transition: transform .15s ease, border-color .15s ease, background-color .15s ease, box-shadow .15s ease;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+}
+.qv-live .qv-opt:hover { border-color: rgba(var(--qv-rgb), .55) !important; box-shadow: 0 4px 14px rgba(var(--qv-rgb), .10); }
+.qv-live .qv-opt:active { transform: scale(.98); }
+.qv-opt.qv-sel { animation: qv-pop .28s ease; }
+
+@keyframes qv-pop { 0% { transform: scale(1); } 40% { transform: scale(.965); } 100% { transform: scale(1); } }
+@keyframes qv-check { 0% { transform: scale(0) rotate(-30deg); } 60% { transform: scale(1.2); } 100% { transform: scale(1); } }
+.qv-check { animation: qv-check .28s cubic-bezier(.34, 1.56, .64, 1); }
+
+/* NPS / rating */
+.qv-live .qv-nps:hover { transform: translateY(-2px); }
+.qv-nps { transition: transform .12s ease, background-color .12s ease, color .12s ease; }
+.qv-star { transition: transform .12s ease; }
+.qv-live .qv-star:hover { transform: scale(1.15); }
+
+/* Inputs */
+.qv-input { transition: border-color .15s ease, box-shadow .15s ease; }
+.qv-input:focus { outline: none; border-color: var(--qv-primary) !important; box-shadow: 0 0 0 4px rgba(var(--qv-rgb), .12); }
+.qv-input::placeholder { color: #a3a8b3; }
+
+/* Slider */
+.qv-range { -webkit-appearance: none; appearance: none; width: 100%; height: 8px; border-radius: 99px; outline: none; cursor: pointer; }
+.qv-range::-webkit-slider-thumb { -webkit-appearance: none; width: 28px; height: 28px; border-radius: 50%; background: #fff; border: 3px solid var(--qv-primary); box-shadow: 0 2px 8px rgba(0, 0, 0, .18); cursor: grab; }
+.qv-range::-moz-range-thumb { width: 24px; height: 24px; border-radius: 50%; background: #fff; border: 3px solid var(--qv-primary); box-shadow: 0 2px 8px rgba(0, 0, 0, .18); cursor: grab; }
+
+/* Buttons */
+.qv-btn { transition: transform .15s ease, box-shadow .15s ease, opacity .15s ease, filter .15s ease; }
+.qv-live .qv-btn:not(:disabled):hover { filter: brightness(1.06); transform: translateY(-1px); }
+.qv-live .qv-btn:not(:disabled):active { transform: scale(.98); }
+.qv-anim-pulse { animation: qv-pulse 1.8s ease-in-out infinite; }
+.qv-anim-glow { animation: qv-glow 2s ease-in-out infinite; }
+.qv-anim-shake { animation: qv-shake 3s ease-in-out infinite; }
+@keyframes qv-pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.035); } }
+@keyframes qv-glow { 0%, 100% { box-shadow: 0 4px 16px rgba(var(--qv-rgb), .25); } 50% { box-shadow: 0 8px 30px rgba(var(--qv-rgb), .55); } }
+@keyframes qv-shake { 0%, 88%, 100% { transform: translateX(0); } 90%, 94%, 98% { transform: translateX(-4px); } 92%, 96% { transform: translateX(4px); } }
+
+/* Entrance animations (live only) */
+.qv-in-fade-up { animation: qv-fade-up .45s cubic-bezier(.2, .7, .3, 1) both; }
+.qv-in-fade { animation: qv-fade .45s ease both; }
+.qv-in-zoom { animation: qv-zoom .4s cubic-bezier(.2, .7, .3, 1.2) both; }
+.qv-in-slide { animation: qv-slide .45s cubic-bezier(.2, .7, .3, 1) both; }
+@keyframes qv-fade-up { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+@keyframes qv-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes qv-zoom { from { opacity: 0; transform: scale(.94); } to { opacity: 1; transform: none; } }
+@keyframes qv-slide { from { opacity: 0; transform: translateX(24px); } to { opacity: 1; transform: none; } }
+
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes qv-draw { to { stroke-dashoffset: 0; } }
+@keyframes qv-toast-in { from { opacity: 0; transform: translateY(-10px) scale(.97); } to { opacity: 1; transform: none; } }
+
+/* Inline editing on the canvas */
+.qv-editable { outline: none; border-radius: 4px; cursor: text; min-width: 1ch; }
+.qv-editable:hover { box-shadow: 0 0 0 1px rgba(var(--qv-rgb), .35); }
+.qv-editable:focus { box-shadow: 0 0 0 2px rgba(var(--qv-rgb), .55); background: rgba(var(--qv-rgb), .04); }
+.qv-editable:empty::before { content: attr(data-placeholder); opacity: .4; pointer-events: none; }
+.qv-var { background: rgba(var(--qv-rgb), .12); color: var(--qv-primary); border-radius: 4px; padding: 0 3px; font-weight: 600; }
+
+/* FAQ */
+.qv-faq summary { list-style: none; cursor: pointer; }
+.qv-faq summary::-webkit-details-marker { display: none; }
+.qv-faq[open] .qv-faq-chev { transform: rotate(180deg); }
+.qv-faq-chev { transition: transform .2s ease; }
+
+/* Carousel */
+.qv-carousel { scrollbar-width: none; }
+.qv-carousel::-webkit-scrollbar { display: none; }
+
+/* Legacy cloned-page helpers (html-script) */
+.qv-html img { max-width: 100%; height: auto; }
+
+@media (prefers-reduced-motion: reduce) {
+  .qv-root *, .qv-root *::before, .qv-root *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+}

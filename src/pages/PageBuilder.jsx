@@ -1,45 +1,101 @@
 // PageBuilder.jsx — Inlead-style layout with sidebar, tabs, canvas, right panel
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { useNavigate, useLocation, useParams } from 'react-router-dom';
-import { Save, Eye, Monitor, Smartphone, ChevronUp, ChevronDown, Trash2, Plus, X, Layout, Bookmark, Settings, Share2, Play, Undo2, Redo2, Grid, MousePointerClick, CheckCircle2, Users, BarChart3, Palette, Package, GitBranch, Globe, Star, Upload, Download, Filter, TrendingDown, Mail, PlayCircle, Lightbulb, Wrench, Clipboard, ArrowRight, ArrowLeft } from 'lucide-react';
+import { Save, Eye, Monitor, Smartphone, ChevronUp, ChevronDown, Trash2, Plus, X, Layout, Bookmark, Settings, Share2, Play, Undo2, Redo2, Grid, MousePointerClick, CheckCircle2, Users, BarChart3, Palette, Package, GitBranch, Globe, Star, Upload, Download, Filter, TrendingDown, Mail, PlayCircle, Lightbulb, Wrench, Clipboard, ArrowRight, ArrowLeft, Wand2, ScanSearch } from 'lucide-react';
 import { saveQuiz, getQuiz, getAnalytics, getLeads } from '../hooks/useQuizStore';
 import { consumeQuota } from '../hooks/useAuth';
 import { BLOCK_TYPES, CATEGORIES, createBlock } from '../utils/blockTypes';
 import { getAdminTemplates, getUserTemplates, saveUserTemplate, deleteUserTemplate } from '../utils/templates';
-import { cloneAndOptimize } from '../utils/cloneService';
-import PhonePreview from '../components/PhonePreview';
+import { cloneAndOptimize, recloneOnePage } from '../utils/cloneService';
 import CloneEditor from '../components/CloneEditor';
 import ClonePropertiesPanel from '../components/ClonePropertiesPanel';
 import { INSERTABLE_ELEMENTS, translateGadgetHtml } from '../components/CloneEditor';
 import PropertiesPanel from '../components/PropertiesPanel';
 import DomainSettings from '../components/DomainSettings';
-
-// ═══ PRE-BUILT STEPS ═══
-const READY_STEPS = [
-    { id: 'welcome', icon: '🏠', name: 'Capa do Quiz', desc: 'Página inicial personalizada', color: '#6c63ff', blocks: [{ type: 'welcome', headline: '', subtitle: '', cta: 'Começar →', emoji: '🔥', imageUrl: '', imageWidth: 100, imagePosition: 'top', textAlign: 'center', bgColor: '' }] },
-    { id: 'gender', icon: '👤', name: 'Sexo', desc: 'Gênero do participante', color: '#8b5cf6', blocks: [{ type: 'choice', text: 'Qual é o seu sexo?', optionLayout: 'list', options: [{ text: 'Feminino', emoji: '👩', weight: 1 }, { text: 'Masculino', emoji: '👨', weight: 2 }, { text: 'Prefiro não dizer', emoji: '🤐', weight: 0 }] }] },
-    { id: 'age', icon: '🎂', name: 'Idade', desc: 'Faixa etária', color: '#3b82f6', blocks: [{ type: 'choice', text: 'Qual é a sua faixa etária?', optionLayout: 'list', options: [{ text: '18-24 anos', emoji: '🌱', weight: 1 }, { text: '25-34 anos', emoji: '💪', weight: 2 }, { text: '35-44 anos', emoji: '⭐', weight: 3 }, { text: '45-54 anos', emoji: '🌟', weight: 4 }, { text: '55+ anos', emoji: '👑', weight: 5 }] }] },
-    { id: 'height', icon: '📏', name: 'Altura', desc: 'Régua de altura', color: '#06b6d4', blocks: [{ type: 'scroll-picker', text: 'Qual é a sua altura?', unit: 'cm', min: 140, max: 210, step: 1, defaultValue: 170 }] },
-    { id: 'weight', icon: '⚖️', name: 'Peso', desc: 'Peso corporal', color: '#10b981', blocks: [{ type: 'number-input', text: 'Qual é o seu peso?', unit: 'kg', placeholder: 'Ex: 72', min: 30, max: 250, imageUrl: '' }] },
-    { id: 'bmi', icon: '📊', name: 'Cálculo de IMC', desc: 'Calcula IMC automático', color: '#8b5cf6', blocks: [{ type: 'bmi', title: 'Seu IMC', text: 'Resultado calculado' }] },
-    { id: 'goal', icon: '🎯', name: 'Objetivo', desc: 'Meta principal', color: '#f59e0b', blocks: [{ type: 'choice', text: 'Qual é o seu principal objetivo?', optionLayout: 'list', options: [{ text: 'Perder peso', emoji: '🔥', weight: 1 }, { text: 'Ganhar massa', emoji: '💪', weight: 2 }, { text: 'Melhorar saúde', emoji: '❤️', weight: 3 }] }] },
-];
+import useHistory from '../builder/useHistory';
+import StepList from '../builder/StepList';
+import BlockPalette from '../builder/Palette';
+import EditorCanvas from '../builder/EditorCanvas';
+import Inspector from '../builder/Inspector';
+import StepSettings from '../builder/StepSettings';
+import { gadgetHtml } from '../builder/cloneGadgets';
+import { createFromPalette } from '../blocks/registry';
+import { STEP_TEMPLATES, QUIZ_TEMPLATES, buildStepTemplate } from '../blocks/presets';
+import { buildTheme, ensureFont } from '../blocks/theme';
+import { isCloneStep } from '../blocks/logic';
+import StepView, { QuizFrame } from '../blocks/StepView';
+import CloneReview from '../builder/CloneReview';
+import { stepsFromClone, designFromClone, switchCloneMode, applyReclone } from '../builder/cloneImport';
+import '../builder/builder.css';
 
 function makeStep(name = 'Nova Etapa') {
     return { id: `stp_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`, name, blocks: [] };
 }
 
+const uid = (p) => `${p}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
+
+// Every block (and option) needs a stable id: selection, conditions and actions reference them
+function withIds(steps) {
+    return (steps || []).map((st, si) => ({
+        ...st,
+        id: st.id || uid(`stp${si}`),
+        blocks: (st.blocks || []).map(b => ({
+            ...b,
+            id: b.id || uid('blk'),
+            ...(Array.isArray(b.options) ? { options: b.options.map((o, oi) => (o && typeof o === 'object' && !o.id ? { ...o, id: `o${oi}` } : o)) } : {}),
+        })),
+    }));
+}
+
+// Deep copy with fresh ids (duplicate block / step)
+function cloneBlock(b) {
+    const c = JSON.parse(JSON.stringify(b));
+    c.id = uid('blk');
+    if (Array.isArray(c.options)) c.options = c.options.map(o => (o && typeof o === 'object' ? { ...o, id: uid('o') } : o));
+    return c;
+}
+
+const DESIGN_KEYS = ['primaryColor', 'bgColor', 'bgImage', 'logoUrl', 'showLogo', 'showProgress', 'allowBack', 'fontFamily', 'borderRadius', 'alignment', 'mainWidth', 'spacing', 'animation', 'doneTitle', 'doneText', 'pixelCode'];
+const pickDesign = (c) => Object.fromEntries(DESIGN_KEYS.filter(k => c[k] !== undefined && c[k] !== '').map(k => [k, c[k]]));
+
+const DEFAULT_CONFIG = {
+    name: '', primaryColor: '#2563eb', bgColor: '', bgImage: '', logoUrl: '', niche: 'outro', collectLead: true,
+    productDescription: '', targetAudience: '',
+    welcomeHeadline: '', welcomeSub: '', welcomeCta: 'Começar →',
+    alignment: 'center', mainWidth: 'small', elementSize: 'default',
+    spacing: 'small', borderRadius: 'medium',
+    showLogo: true, showProgress: true, allowBack: true,
+    fontFamily: 'Inter', fontSize: 'default', animation: 'fade-up',
+    headerColor: '#111', bodyColor: '#fff',
+};
+
 export default function PageBuilder() {
     const navigate = useNavigate();
     const location = useLocation();
     const { id: editId } = useParams();
-    const [steps, setSteps] = useState([]);
+    // Document (steps + config) with undo/redo
+    const [doc, setDoc, hist] = useHistory({ steps: [], config: DEFAULT_CONFIG });
+    const steps = doc.steps;
+    const config = doc.config;
+    const setSteps = useCallback((v, opts) => setDoc(d => ({ ...d, steps: typeof v === 'function' ? v(d.steps) : v }), opts), [setDoc]);
+    const setConfig = useCallback((v, opts) => setDoc(d => ({ ...d, config: typeof v === 'function' ? v(d.config) : v }), opts), [setDoc]);
     const [activeStepIdx, setActiveStepIdx] = useState(0);
-    const [selectedBlockIdx, setSelectedBlockIdx] = useState(null);
+    const [selectedBlockId, setSelectedBlockId] = useState(null);
+    const [paletteTab, setPaletteTab] = useState('blocks');
+    const [paletteOpen, setPaletteOpen] = useState(true);
+    const [settingsTab, setSettingsTab] = useState('step');
+    const [draggingPalette, setDraggingPalette] = useState(false);
+    const [published, setPublished] = useState(false);
+    const [saveState, setSaveState] = useState('idle'); // idle | dirty | saving | saved | draft | error
+    const [showCloneReview, setShowCloneReview] = useState(false);
+    const [recloningIdx, setRecloningIdx] = useState(null);
+    const [cloneOpts, setCloneOpts] = useState({ native: true, dynamic: true, branches: false, ai: true });
+    const [cloneGraphPartial, setCloneGraphPartial] = useState(false);
+    const liveRef = useRef(null);
+    const savedVersionRef = useRef(0);
+    const syncSavedRef = useRef(false);
     const [viewMode, setViewMode] = useState('mobile');
     const [saved, setSaved] = useState(null);
-    const [dragFromSidebar, setDragFromSidebar] = useState(null);
-    const [dragOverBlockIdx, setDragOverBlockIdx] = useState(null);
     const [showTemplates, setShowTemplates] = useState(false);
     const [isClone, setIsClone] = useState(false);
     const [clonedResults, setClonedResults] = useState(null);
@@ -57,7 +113,6 @@ export default function PageBuilder() {
     const [aiStepPrompt, setAiStepPrompt] = useState('');
     const [aiStepLoading, setAiStepLoading] = useState(false);
     const [cloneSelectedEl, setCloneSelectedEl] = useState(null);
-    const [renamingStepIdx, setRenamingStepIdx] = useState(null);
     const [showCloneModal, setShowCloneModal] = useState(false);
     const [cloneUrl, setCloneUrl] = useState('');
     const [cloneNiche, setCloneNiche] = useState('emagrecimento');
@@ -69,18 +124,6 @@ export default function PageBuilder() {
     const [cloneError, setCloneError] = useState(null);
     const [cloneLog, setCloneLog] = useState([]);
     const [toast, setToast] = useState('');
-    const [rightPanelTab, setRightPanelTab] = useState('etapa');
-    const [config, setConfig] = useState({
-        name: '', primaryColor: '#2563eb', bgColor: '', bgImage: '', logoUrl: '', niche: 'outro', collectLead: true,
-        productDescription: '', targetAudience: '',
-        welcomeHeadline: '', welcomeSub: '', welcomeCta: 'Começar →',
-        // Design tab globals
-        alignment: 'center', mainWidth: 'small', elementSize: 'default',
-        spacing: 'small', borderRadius: 'medium',
-        showLogo: true, showProgress: true, allowBack: true,
-        fontFamily: 'Inter', fontSize: 'default',
-        headerColor: '#111', bodyColor: '#fff',
-    });
 
     // Analytics state for Leads tab
     const [analytics, setAnalytics] = useState(null);
@@ -91,18 +134,25 @@ export default function PageBuilder() {
             getQuiz(editId).then(q => {
                 if (!q) return;
                 setQuizId(q.id);
-                setConfig(c => ({ ...c, name: q.name || '', primaryColor: q.primaryColor || '#2563eb', bgColor: q.bgColor || '', niche: q.niche || 'outro', collectLead: q.collectLead !== false, welcomeHeadline: q.welcome?.headline || '', welcomeSub: q.welcome?.subheadline || '', welcomeCta: q.welcome?.cta || 'Começar →' }));
-                if (q.cloneLang && q.cloneLang !== 'original') setCloneLang(q.cloneLang);
-                if (q.steps?.length) { setSteps(q.steps); setActiveStepIdx(0); }
-                else if (q.pages?.length) {
-                    const ns = q.pages.map((p, i) => {
+                liveRef.current = { ...q, draft: undefined };
+                setPublished(!!q.published);
+                const src = q.draft ? { ...q, ...q.draft } : q;
+                setConfig(c => ({ ...c, name: src.name || '', primaryColor: src.primaryColor || '#2563eb', bgColor: src.bgColor || '', niche: src.niche || 'outro', collectLead: src.collectLead !== false, welcomeHeadline: src.welcome?.headline || '', welcomeSub: src.welcome?.subheadline || '', welcomeCta: src.welcome?.cta || 'Começar →', productDescription: src.productDescription || '', targetAudience: src.targetAudience || '', cloneSource: src.cloneSource || null, ...(src.design || {}) }));
+                if (src.cloneLang && src.cloneLang !== 'original') setCloneLang(src.cloneLang);
+                if (src.steps?.length) { setSteps(withIds(src.steps)); setActiveStepIdx(0); }
+                else if (src.pages?.length) {
+                    const ns = src.pages.map((p, i) => {
                         if (p.type === 'compound' && p.blocks) return { id: `stp_${Date.now()}_${i}`, name: `Etapa ${i + 1}`, blocks: p.blocks };
                         return { id: `stp_${Date.now()}_${i}`, name: p.text || p.headline || `Etapa ${i + 1}`, blocks: [p] };
                     });
-                    setSteps(ns); setActiveStepIdx(0);
+                    setSteps(withIds(ns)); setActiveStepIdx(0);
                 }
-                if (q.results?.length) setClonedResults(q.results);
-                if (q.clonedCSS) setClonedCSS(q.clonedCSS);
+                if (src.results?.length) setClonedResults(src.results);
+                if (src.clonedCSS) setClonedCSS(src.clonedCSS);
+                hist.clear();
+                syncSavedRef.current = true;
+                setSaveState(q.draft ? 'draft' : 'saved');
+                if (q.draft && q.published) showToastMsg('Você tem alterações ainda não publicadas');
             });
             // Load analytics/leads
             getAnalytics(editId).then(a => setAnalytics(a));
@@ -113,12 +163,13 @@ export default function PageBuilder() {
         if (cd) {
             setIsClone(true);
             setConfig(c => ({ ...c, name: cd.quizName || '', primaryColor: cd.primaryColor || '#2563eb', niche: cd.niche || 'outro', welcomeHeadline: cd.welcome?.headline || '', welcomeSub: cd.welcome?.subheadline || '', welcomeCta: cd.welcome?.cta || 'Começar →' }));
-            if (cd.steps?.length) { setSteps(cd.steps); setActiveStepIdx(0); }
+            if (cd.steps?.length) { setSteps(withIds(cd.steps)); setActiveStepIdx(0); }
             else if (cd.blocks?.length) {
                 const ns = cd.blocks.map((b, i) => ({ id: `stp_${Date.now()}_${i}`, name: b.text || b.title || `Etapa ${i + 1}`, blocks: [b] }));
-                setSteps(ns); setActiveStepIdx(0);
+                setSteps(withIds(ns)); setActiveStepIdx(0);
             }
             if (cd.results?.length) setClonedResults(cd.results);
+            hist.clear();
         } else if (!location.state) {
             setShowOnboarding(true);
         }
@@ -130,10 +181,12 @@ export default function PageBuilder() {
         if (params.get('clone') === 'true') {
             setShowCloneModal(true);
             setCloneMode('url');
+            setShowOnboarding(false);
         }
         const urlName = params.get('name');
         if (urlName && !config.name) {
             setConfig(c => ({ ...c, name: urlName }));
+            hist.clear();
         }
     }, []);
 
@@ -141,51 +194,103 @@ export default function PageBuilder() {
     const hasConsumedQuizRef = useRef(!!editId); // Don't consume quota for existing quizzes
     useEffect(() => {
         const handler = (e) => {
-            if (steps.length > 0 && !saved) {
+            if (steps.some(st => st.blocks.length) && (saveState === 'dirty' || saveState === 'saving' || (!quizId && !editId))) {
                 e.preventDefault();
                 e.returnValue = 'Tem certeza? Salve antes de sair ou perderá o quiz!';
             }
         };
         window.addEventListener('beforeunload', handler);
         return () => window.removeEventListener('beforeunload', handler);
-    }, [steps, saved]);
+    }, [steps, saveState, quizId, editId]);
 
     const activeStep = steps[activeStepIdx] || null;
-    const selectedBlock = activeStep && selectedBlockIdx !== null ? activeStep.blocks[selectedBlockIdx] : null;
+    const onCloneStep = isCloneStep(activeStep);
+    const selectedPos = activeStep && selectedBlockId ? activeStep.blocks.findIndex(b => b.id === selectedBlockId) : -1;
+    const selectedBlockIdx = selectedPos >= 0 ? selectedPos : null;
+    const selectedBlock = selectedBlockIdx !== null ? activeStep.blocks[selectedBlockIdx] : null;
+    const setSelectedBlockIdx = (i) => setSelectedBlockId(i === null || i === undefined ? null : (steps[activeStepIdx]?.blocks?.[i]?.id ?? null));
     const updateConfig = (k, v) => setConfig(c => ({ ...c, [k]: v }));
     const showToastMsg = (msg) => { setToast(msg); setTimeout(() => setToast(''), 2500); };
 
-    const updateBlock = (bi, nb) => setSteps(s => s.map((st, si) => si === activeStepIdx ? { ...st, blocks: st.blocks.map((b, i) => i === bi ? nb : b) } : st));
-    const deleteBlock = (bi) => { setSteps(s => s.map((st, si) => si === activeStepIdx ? { ...st, blocks: st.blocks.filter((_, i) => i !== bi) } : st)); setSelectedBlockIdx(null); };
+    // Keep the active step index valid after undo/redo/delete
+    useEffect(() => {
+        if (steps.length && activeStepIdx > steps.length - 1) setActiveStepIdx(steps.length - 1);
+    }, [steps.length, activeStepIdx]);
 
-    const addBlockToStep = (type, insertAt = null) => {
-        if (!steps.length) { const ns = makeStep('Etapa 1'); setSteps([ns]); setActiveStepIdx(0); }
-        const nb = createBlock(type);
-        setSteps(s => s.map((st, si) => {
-            if (si !== (steps.length ? activeStepIdx : 0)) return st;
-            const blocks = [...st.blocks]; insertAt !== null ? blocks.splice(insertAt, 0, nb) : blocks.push(nb);
-            return { ...st, blocks };
-        }));
-        setSelectedBlockIdx(insertAt ?? (activeStep?.blocks.length || 0));
+    const mapActiveBlocks = (fn, opts) => setSteps(s => s.map((st, si) => (si === activeStepIdx ? { ...st, blocks: fn(st.blocks) } : st)), opts);
+    const updateBlock = (bi, nb) => mapActiveBlocks(blocks => blocks.map((b, i) => (i === bi ? nb : b)));
+    const updateBlockById = (id, next, replace) => mapActiveBlocks(blocks => blocks.map(b => (b.id === id ? (replace ? next : { ...b, ...next }) : b)));
+    const deleteBlockById = (id) => {
+        if (!id) return;
+        mapActiveBlocks(blocks => blocks.filter(b => b.id !== id), { checkpoint: true });
+        if (selectedBlockId === id) setSelectedBlockId(null);
+    };
+    const duplicateBlockById = (id) => {
+        const i = activeStep?.blocks.findIndex(b => b.id === id);
+        if (i === undefined || i < 0) return;
+        const copy = cloneBlock(activeStep.blocks[i]);
+        mapActiveBlocks(blocks => { const n = [...blocks]; n.splice(i + 1, 0, copy); return n; }, { checkpoint: true });
+        setSelectedBlockId(copy.id);
+    };
+    const moveBlock = (from, to) => {
+        const len = activeStep?.blocks.length || 0;
+        if (to < 0 || to >= len || from === to) return;
+        mapActiveBlocks(blocks => { const n = [...blocks]; const [m] = n.splice(from, 1); n.splice(to, 0, m); return n; }, { checkpoint: true });
+    };
+    // Insert a ready block at `index` of the active step (end when null); creates the first step if needed
+    const insertBlock = (block, index = null) => {
+        if (!steps.length) {
+            const ns = { ...makeStep('Etapa 1'), blocks: [block] };
+            setSteps([ns], { checkpoint: true }); setActiveStepIdx(0);
+        } else {
+            mapActiveBlocks(blocks => { const n = [...blocks]; n.splice(index === null ? n.length : index, 0, block); return n; }, { checkpoint: true });
+        }
+        setSelectedBlockId(block.id);
+    };
+    const insertFromPalette = (entry, index = null) => {
+        const pos = index ?? (selectedBlockIdx !== null ? selectedBlockIdx + 1 : null);
+        insertBlock(createFromPalette(entry), pos);
     };
 
-    const reorderBlock = (from, to) => {
-        setSteps(s => s.map((st, si) => {
-            if (si !== activeStepIdx) return st;
-            const blocks = [...st.blocks]; const [moved] = blocks.splice(from, 1);
-            blocks.splice(to > from ? to - 1 : to, 0, moved); return { ...st, blocks };
-        })); setSelectedBlockIdx(to > from ? to - 1 : to);
+    const selectStep = (i) => { setActiveStepIdx(i); setSelectedBlockId(null); setCloneSelectedEl(null); };
+    const moveStepTo = (from, to) => {
+        const activeId = steps[activeStepIdx]?.id;
+        const next = [...steps]; const [m] = next.splice(from, 1); next.splice(to > from ? to - 1 : to, 0, m);
+        setSteps(next, { checkpoint: true });
+        setActiveStepIdx(Math.max(0, next.findIndex(st => st.id === activeId)));
     };
-
-    const moveStep = (i, dir) => { const ni = i + dir; if (ni < 0 || ni >= steps.length) return; setSteps(s => { const a = [...s];[a[i], a[ni]] = [a[ni], a[i]]; return a; }); if (activeStepIdx === i) setActiveStepIdx(ni); };
-    const deleteStep = (i) => { setSteps(s => s.filter((_, j) => j !== i)); if (activeStepIdx === i) { setActiveStepIdx(Math.max(0, i - 1)); setSelectedBlockIdx(null); } else if (activeStepIdx > i) setActiveStepIdx(a => a - 1); };
-    const addStep = (name = 'Nova Etapa') => { const ns = makeStep(name); setSteps(s => [...s, ns]); setActiveStepIdx(steps.length); setSelectedBlockIdx(null); };
+    const deleteStep = (i) => {
+        setSteps(s => s.filter((_, j) => j !== i), { checkpoint: true });
+        if (activeStepIdx === i) { setActiveStepIdx(Math.max(0, i - 1)); setSelectedBlockId(null); }
+        else if (activeStepIdx > i) setActiveStepIdx(a => a - 1);
+    };
+    const insertStepAfterActive = (ns) => {
+        const at = steps.length ? activeStepIdx + 1 : 0;
+        setSteps(s => { const n = [...s]; n.splice(at, 0, ns); return n; }, { checkpoint: true });
+        setActiveStepIdx(at); setSelectedBlockId(null); setCloneSelectedEl(null);
+    };
+    const addStep = (name = 'Nova Etapa') => insertStepAfterActive(makeStep(name === 'Nova Etapa' ? `Etapa ${steps.length + 1}` : name));
+    const duplicateStep = (i) => {
+        const src = steps[i];
+        const ns = { ...JSON.parse(JSON.stringify(src)), id: uid('stp'), name: `${src.name} (cópia)`, blocks: src.blocks.map(cloneBlock) };
+        setSteps(s => { const n = [...s]; n.splice(i + 1, 0, ns); return n; }, { checkpoint: true });
+        setActiveStepIdx(i + 1); setSelectedBlockId(null);
+        showToastMsg('Etapa duplicada');
+    };
+    const addStepFromTemplate = (key) => {
+        const ns = buildStepTemplate(key);
+        if (!ns) return;
+        insertStepAfterActive(ns);
+        showToastMsg(`Etapa “${ns.name}” adicionada`);
+    };
     const renameStep = (i, name) => setSteps(s => s.map((st, si) => si === i ? { ...st, name } : st));
+    const updateStep = (i, next) => setSteps(s => s.map((st, si) => (si === i ? next : st)));
 
     const loadTemplate = (t) => {
         const tSteps = typeof t.steps === 'function' ? t.steps() : JSON.parse(JSON.stringify(t.steps || []));
-        setSteps(tSteps); setConfig(c => ({ ...c, name: t.name || '', primaryColor: t.color || c.primaryColor }));
-        setActiveStepIdx(0); setSelectedBlockIdx(null); setShowTemplates(false);
+        setDoc(d => ({ steps: withIds(tSteps), config: { ...d.config, name: d.config.name || t.name || '', primaryColor: t.color || d.config.primaryColor, ...(t.design || {}) } }), { checkpoint: true });
+        setActiveStepIdx(0); setSelectedBlockId(null); setShowTemplates(false); setActiveTab('construtor');
+        showToastMsg(`Template “${t.name}” carregado — ⌘Z desfaz`);
     };
 
     const saveCurrentAsTemplate = () => {
@@ -212,10 +317,22 @@ export default function PageBuilder() {
         showToastMsg('Template favoritado!');
     };
 
-    const handleDropBlock = useCallback((insertIdx) => {
-        if (dragFromSidebar) { addBlockToStep(dragFromSidebar, insertIdx); setDragFromSidebar(null); }
-        setDragOverBlockIdx(null);
-    }, [dragFromSidebar, activeStepIdx, steps]);
+    // Palette → clone pages get raw HTML gadgets, native steps get blocks
+    const handlePaletteAdd = (entry) => {
+        if (onCloneStep && window.__cloneEditorApi?.insertElement) {
+            window.__cloneEditorApi.insertElement(gadgetHtml(entry.type, entry.label));
+            return;
+        }
+        insertFromPalette(entry);
+    };
+    const handlePaletteDragStart = (entry) => {
+        setDraggingPalette(true);
+        window.__draggedGadgetHtml = translateGadgetHtml(gadgetHtml(entry.type, entry.label), cloneLang);
+    };
+    const handlePaletteDragEnd = () => { setDraggingPalette(false); window.__draggedGadgetHtml = null; };
+
+    const T = buildTheme(config);
+    useEffect(() => { ensureFont(config.fontFamily); }, [config.fontFamily]);
 
     // Stable ID ref — generate once and reuse for the lifetime of this builder session
     const stableIdRef = useRef(null);
@@ -239,47 +356,154 @@ export default function PageBuilder() {
             stepPageMap[s.id] = i;
             if (s.goToStep) stepGoToMap[i] = s.goToStep;
         });
-        return { id, name: config.name || 'Meu Quiz', emoji: isClone ? '🔗' : '🧱', primaryColor: config.primaryColor, bgColor: config.bgColor, colorPalette: [config.primaryColor], productName: config.name, niche: config.niche, metadata: { niche: config.niche, subTheme: config.name, tone: 'profissional', palette: [config.primaryColor], emojiStyle: 'moderno' }, sections: [{ label: 'Quiz', startIndex: 0 }], welcome: { headline: config.welcomeHeadline || 'Descubra', subheadline: config.welcomeSub || '', cta: config.welcomeCta || 'Começar →' }, pages, questions: allBlocks.filter(b => ['choice', 'statement', 'likert', 'image-select', 'single-choice', 'yes-no'].includes(b.type)), results: clonedResults || dr, steps, stepPageMap, stepGoToMap, clonedCSS: clonedCSS || undefined, cloneLang: cloneLang || 'original', collectLead: config.collectLead, published: false, createdAt: Date.now(), updatedAt: Date.now() };
+        return { id, name: config.name || 'Meu Quiz', emoji: isClone ? '🔗' : '🧱', primaryColor: config.primaryColor, bgColor: config.bgColor, colorPalette: [config.primaryColor], productName: config.name, niche: config.niche, metadata: { niche: config.niche, subTheme: config.name, tone: 'profissional', palette: [config.primaryColor], emojiStyle: 'moderno' }, sections: [{ label: 'Quiz', startIndex: 0 }], welcome: { headline: config.welcomeHeadline || 'Descubra', subheadline: config.welcomeSub || '', cta: config.welcomeCta || 'Começar →' }, pages, questions: allBlocks.filter(b => ['choice', 'statement', 'likert', 'image-select', 'single-choice', 'yes-no'].includes(b.type)), results: clonedResults || dr, steps, stepPageMap, stepGoToMap, clonedCSS: clonedCSS || undefined, cloneLang: cloneLang || 'original', collectLead: config.collectLead, published, createdAt: liveRef.current?.createdAt || Date.now(), updatedAt: Date.now(), design: pickDesign(config), rendererVersion: 2, cloneSource: config.cloneSource || undefined, productDescription: config.productDescription, targetAudience: config.targetAudience, logoUrl: config.logoUrl || undefined };
+    };
+
+    // Save: unpublished quizzes are written directly; published ones keep the live version and store edits as a draft
+    const persist = async ({ silent = false } = {}) => {
+        if (!steps.some(st => st.blocks.length)) return null;
+        const built = buildQuiz();
+        const payload = published && liveRef.current
+            ? { ...liveRef.current, draft: built, updatedAt: Date.now() }
+            : { ...built, published: false };
+        const versionAtSave = hist.version;
+        setSaveState('saving');
+        const result = await saveQuiz(payload, { silent });
+        if (!result) { setSaveState('error'); return null; }
+        savedVersionRef.current = versionAtSave;
+        setSaveState(published ? 'draft' : 'saved');
+        if (!quizId) setQuizId(result.id);
+        if (!hasConsumedQuizRef.current) {
+            hasConsumedQuizRef.current = true;
+            try { await consumeQuota('quiz'); } catch { /* don't block */ }
+        }
+        if (!editId && result.id) window.history.replaceState(null, '', `/builder/page/${result.id}`);
+        return result;
     };
 
     const handleSave = async () => {
-        if (!steps.length) return;
-        const quiz = buildQuiz();
-        console.log('[Save] Saving quiz with id:', quiz.id, 'quizId state:', quizId, 'editId:', editId);
-        const result = await saveQuiz(quiz);
-        console.log('[Save] Server response:', result?.id, result ? 'OK' : 'FAILED');
-        if (result) {
-            setQuizId(result.id);
-            // Consume quiz quota on first save only
-            if (!hasConsumedQuizRef.current) {
-                hasConsumedQuizRef.current = true;
-                try { await consumeQuota('quiz'); } catch (e) { /* don't block */ }
-            }
-            // Update URL without remounting the component
-            if (!editId && result.id) {
-                window.history.replaceState(null, '', `/builder/page/${result.id}`);
-            }
-            showToastMsg('Salvo!');
-        }
+        const r = await persist();
+        if (r) showToastMsg(published ? 'Rascunho salvo — clique em Publicar para ir ao ar' : 'Salvo!');
     };
 
     const handlePublish = async () => {
         if (!steps.length || !steps.some(s => s.blocks.length > 0)) return showToastMsg('Adicione pelo menos 1 bloco!');
-        const quiz = { ...buildQuiz(), published: true };
-        console.log('[Publish] Publishing quiz with id:', quiz.id, 'quizId state:', quizId, 'editId:', editId);
+        const quiz = { ...buildQuiz(), published: true, draft: null };
+        const versionAtSave = hist.version;
+        setSaveState('saving');
         const result = await saveQuiz(quiz);
-        console.log('[Publish] Server response:', result?.id, result ? 'OK' : 'FAILED');
         if (result) {
             setQuizId(result.id);
-            // Update URL without remounting the component
-            if (!editId && result.id) {
-                window.history.replaceState(null, '', `/builder/page/${result.id}`);
+            liveRef.current = { ...result, draft: undefined };
+            setPublished(true);
+            savedVersionRef.current = versionAtSave;
+            setSaveState('saved');
+            if (!hasConsumedQuizRef.current) {
+                hasConsumedQuizRef.current = true;
+                try { await consumeQuota('quiz'); } catch { /* don't block */ }
             }
+            if (!editId && result.id) window.history.replaceState(null, '', `/builder/page/${result.id}`);
             setSaved(result);
             setShowShare(true);
             showToastMsg('🎉 Publicado com sucesso!');
-        }
+        } else setSaveState('error');
     };
+
+    // ── Cloned steps: blocks ⇄ HTML, re-clone ──
+    const switchModeAt = (i, mode) => setSteps(s => s.map((st, j) => (j === i ? switchCloneMode(st, mode) : st)), { checkpoint: true });
+    const switchAllModes = (mode) => setSteps(s => s.map(st => (st.clone && (mode === 'html' || st.clone.native?.length) ? switchCloneMode(st, mode) : st)), { checkpoint: true });
+    const recloneAt = async (i) => {
+        const st = steps[i];
+        const src = config.cloneSource;
+        if (!st?.clone || !src?.url || !src?.path) return showToastMsg('Este quiz não tem os dados para re-clonar');
+        if (st.clone.branch) return showToastMsg('Páginas de ramificação ainda não podem ser re-clonadas sozinhas');
+        if (st.clone.report?.dynamic?.length && !confirm('Esta página tem conteúdo dinâmico (fórmulas com as respostas). Re-clonar só esta página traz os textos fixos de novo — as fórmulas precisarão ser refeitas. Continuar?')) return;
+        setRecloningIdx(i);
+        try {
+            const page = await recloneOnePage(src.url, src.path, st.clone.index);
+            setSteps(s => s.map((x, j) => (j === i ? applyReclone(x, page) : x)), { checkpoint: true });
+            showToastMsg('Página re-clonada!');
+        } catch (err) {
+            showToastMsg(err.message || 'Erro ao re-clonar');
+        }
+        setRecloningIdx(null);
+    };
+
+    const generateAiStep = async () => {
+        if (aiStepLoading) return;
+        setAiStepLoading(true);
+        showToastMsg('🤖 Gerando etapa com IA...');
+        try {
+            const API_BASE = import.meta.env.DEV ? 'http://localhost:3001' : '';
+            const existingSteps = steps.map((st, i) => ({
+                step: i + 1,
+                name: st.name,
+                blocks: st.blocks.map(b => ({ type: b.type, text: b.text || b.headline || '', options: (b.options || []).map(o => o.text) })),
+            }));
+            const res = await fetch(`${API_BASE}/api/generate-step`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ existingSteps, productName: config.name || 'Quiz', niche: config.niche || 'outro', totalSteps: steps.length, productDescription: config.productDescription || '', targetAudience: config.targetAudience || '' }),
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(data.error || 'Erro ao gerar');
+            if (data.step) {
+                const [ns] = withIds([{ id: uid('stp_ai'), name: data.step.name || `Etapa ${steps.length + 1}`, blocks: data.step.blocks || [data.step] }]);
+                insertStepAfterActive(ns);
+                showToastMsg(`Etapa “${ns.name}” criada com IA!`);
+            }
+        } catch (err) {
+            showToastMsg('Erro ao gerar: ' + (err.message || 'tente novamente'));
+        }
+        setAiStepLoading(false);
+    };
+
+    const handlePreview = async () => {
+        if (!steps.some(st => st.blocks.length)) return showToastMsg('Adicione pelo menos 1 bloco!');
+        const win = window.open('about:blank', '_blank');
+        const r = await persist({ silent: true });
+        if (r && win) win.location.href = `/q/${r.id}?preview=1`;
+        else if (win) { win.close(); showToastMsg('Não foi possível salvar para a prévia'); }
+    };
+
+    // Autosave (only once the quiz exists on the server)
+    const autosaveTimer = useRef(null);
+    useEffect(() => {
+        if (syncSavedRef.current) { syncSavedRef.current = false; savedVersionRef.current = hist.version; return undefined; }
+        if (!(quizId || editId) || hist.version === savedVersionRef.current) return undefined;
+        if (hist.version !== savedVersionRef.current && saveState !== 'saving') setSaveState('dirty');
+        clearTimeout(autosaveTimer.current);
+        autosaveTimer.current = setTimeout(() => { persist({ silent: true }); }, 1800);
+        return () => clearTimeout(autosaveTimer.current);
+    }, [hist.version]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // Keyboard shortcuts
+    useEffect(() => {
+        const onKey = (e) => {
+            if (activeTab !== 'construtor') return;
+            const t = e.target;
+            const typing = t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName));
+            const mod = e.metaKey || e.ctrlKey;
+            const k = e.key.toLowerCase();
+            if (mod && k === 's') { e.preventDefault(); handleSave(); return; }
+            if (typing) return;
+            if (mod && k === 'z') { e.preventDefault(); if (e.shiftKey) hist.redo(); else hist.undo(); return; }
+            if (mod && k === 'y') { e.preventDefault(); hist.redo(); return; }
+            if (onCloneStep) return;
+            if (!selectedBlockId) {
+                if (e.altKey && e.key === 'ArrowDown' && activeStepIdx < steps.length - 1) { e.preventDefault(); selectStep(activeStepIdx + 1); }
+                if (e.altKey && e.key === 'ArrowUp' && activeStepIdx > 0) { e.preventDefault(); selectStep(activeStepIdx - 1); }
+                return;
+            }
+            if (mod && k === 'd') { e.preventDefault(); duplicateBlockById(selectedBlockId); }
+            else if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); deleteBlockById(selectedBlockId); }
+            else if (e.key === 'Escape') setSelectedBlockId(null);
+            else if (e.altKey && e.key === 'ArrowUp' && selectedBlockIdx > 0) { e.preventDefault(); moveBlock(selectedBlockIdx, selectedBlockIdx - 1); }
+            else if (e.altKey && e.key === 'ArrowDown' && selectedBlockIdx !== null) { e.preventDefault(); moveBlock(selectedBlockIdx, selectedBlockIdx + 1); }
+        };
+        window.addEventListener('keydown', onKey);
+        return () => window.removeEventListener('keydown', onKey);
+    });
 
     const quizUrl = saved ? `${window.location.origin}/q/${saved.id}` : (quizId ? `${window.location.origin}/q/${quizId}` : '');
 
@@ -353,7 +577,9 @@ export default function PageBuilder() {
                 <div className="topbar-right">
                     <button className="topbar-icon" title="Configurações" onClick={() => setShowSettings(true)}><Settings size={15} /></button>
                     <button className="topbar-icon" title="Compartilhar" onClick={() => setShowShare(true)}><Share2 size={15} /></button>
-                    <button className="topbar-icon" title="Preview" onClick={async () => { if (steps.some(s => s.blocks.length)) { const q = buildQuiz(); const s = await saveQuiz(q); if (s) window.open(`/q/${s.id}`, '_blank'); } }}><Play size={15} /></button>
+                    {renderSaveStatus()}
+                    {(!(quizId || editId) || saveState === 'error') && steps.some(st => st.blocks.length) && <button className="btn btn-ghost btn-sm" onClick={handleSave} title="Salvar (⌘S)"><Save size={13} style={{ marginRight: 4 }} /> Salvar</button>}
+                    <button className="topbar-icon" title="Testar o quiz (abre uma prévia)" onClick={handlePreview}><Play size={15} /></button>
                     <button className="btn btn-ghost btn-sm" onClick={() => {
                         const q = buildQuiz();
                         const tpl = { ...q, id: undefined, name: (q.name || 'Meu Quiz') + ' (Template)', emoji: '⭐', leads: undefined, analytics: undefined };
@@ -366,302 +592,8 @@ export default function PageBuilder() {
         );
     }
 
-    function renderToast() {
-        if (!toast) return null;
-        return <div style={{ position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)', background: '#111', color: '#fff', padding: '10px 20px', borderRadius: 10, fontSize: '0.8rem', fontWeight: 600, zIndex: 9999, boxShadow: '0 4px 20px rgba(0,0,0,0.25)', animation: 'fadeIn 0.2s' }}>{toast}</div>;
-    }
-
-    // ═══ MAIN RENDER ═══
-
-    // ═══ ONBOARDING SCREEN ═══
-    if (showOnboarding) return (
-        <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: 'linear-gradient(135deg, #f8f9ff 0%, #f0f4ff 100%)', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
-            <div style={{ width: '100%', maxWidth: 520, background: '#fff', borderRadius: 16, padding: '36px 32px', boxShadow: '0 8px 40px rgba(0,0,0,0.08)' }}>
-                <div style={{ textAlign: 'center', marginBottom: 28 }}>
-                    <div style={{ fontSize: 40, marginBottom: 8 }}>🚀</div>
-                    <h1 style={{ fontSize: '1.4rem', fontWeight: 700, color: '#1a1a2e', marginBottom: 6 }}>Criar novo Quiz</h1>
-                    <p style={{ fontSize: '0.82rem', color: '#64748b' }}>Conte sobre seu produto para a IA criar etapas melhores</p>
-                </div>
-                <div className="form-group">
-                    <label className="label">Nome do produto *</label>
-                    <input className="input" value={config.name} placeholder="Ex: Leaply, Keto Diet, Skin Care Pro" onChange={e => updateConfig('name', e.target.value)} autoFocus />
-                </div>
-                <div className="form-group">
-                    <label className="label">Nicho</label>
-                    <select className="input" value={config.niche} onChange={e => updateConfig('niche', e.target.value)}>
-                        {['saude', 'fitness', 'beleza', 'educacao', 'financas', 'tech', 'alimentacao', 'marketing', 'ecommerce', 'outro'].map(n => (
-                            <option key={n} value={n}>{n.charAt(0).toUpperCase() + n.slice(1)}</option>
-                        ))}
-                    </select>
-                </div>
-                <div className="form-group">
-                    <label className="label">Sobre o produto</label>
-                    <textarea className="input" rows={3} value={config.productDescription} placeholder="Descreva brevemente o que seu produto faz, pra quem é, e qual problema resolve..." onChange={e => updateConfig('productDescription', e.target.value)}
-                        style={{ resize: 'vertical', minHeight: 72, fontFamily: 'inherit' }} />
-                </div>
-                <div className="form-group">
-                    <label className="label">Público-alvo</label>
-                    <input className="input" value={config.targetAudience} placeholder="Ex: Mulheres 25-45 que querem emagrecer" onChange={e => updateConfig('targetAudience', e.target.value)} />
-                </div>
-                <div style={{ display: 'flex', gap: 10, marginTop: 20 }}>
-                    <button className="btn btn-ghost" style={{ flex: 1 }} onClick={() => { setShowOnboarding(false); setActiveTab('templates'); }}>Pular</button>
-                    <button className="btn btn-accent" style={{ flex: 2 }} onClick={() => { setShowOnboarding(false); setActiveTab('construtor'); if (!steps.length) addStep('Etapa 1'); }}>
-                        {config.name ? `Criar quiz para "${config.name}"` : 'Começar →'}
-                    </button>
-                </div>
-            </div>
-        </div>
-    );
-
-    return (
-        <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: 'var(--bg-base)', overflow: 'hidden' }}>
-            {renderTopBar()}
-
-            {/* ═══ CONSTRUTOR TAB ═══ */}
-            {activeTab === 'construtor' && (
-                <div className="builder-layout">
-                    {/* LEFT SIDEBAR — step list + component palette side by side */}
-                    <div className="builder-sidebar" style={{ display: 'flex', gap: 0, padding: 0 }}>
-                        {/* Step list column */}
-                        <div style={{ width: 170, minWidth: 150, borderRight: '1px solid var(--border)', display: 'flex', flexDirection: 'column', background: '#fafafc' }}>
-                            <div style={{ padding: '6px', fontSize: '0.68rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', borderBottom: '1px solid var(--border)' }}>Etapas</div>
-                            <div style={{ padding: '4px', flex: 1, overflowY: 'auto' }}>
-                                {steps.map((step, i) => (
-                                    <div key={step.id}
-                                        className={`step-item ${activeStepIdx === i ? 'active' : ''}`}
-                                        draggable
-                                        onDragStart={e => { e.dataTransfer.setData('stepIdx', String(i)); e.dataTransfer.effectAllowed = 'move'; }}
-                                        onDragOver={e => { e.preventDefault(); e.currentTarget.style.borderTop = '2px solid var(--primary)'; }}
-                                        onDragLeave={e => { e.currentTarget.style.borderTop = 'none'; }}
-                                        onDrop={e => {
-                                            e.preventDefault(); e.currentTarget.style.borderTop = 'none';
-                                            const fromIdx = parseInt(e.dataTransfer.getData('stepIdx'));
-                                            if (isNaN(fromIdx) || fromIdx === i) return;
-                                            setSteps(prev => {
-                                                const ns = [...prev]; const [moved] = ns.splice(fromIdx, 1); ns.splice(i, 0, moved); return ns;
-                                            });
-                                            setActiveStepIdx(i);
-                                        }}
-                                        onClick={() => { setActiveStepIdx(i); setSelectedBlockIdx(null); setRenamingStepIdx(null); }}
-                                        onDoubleClick={() => setRenamingStepIdx(i)}
-                                        style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '7px 6px', marginBottom: 1, borderRadius: 6, cursor: 'grab', borderTop: 'none',
-                                            background: (() => {
-                                                const code = (step.blocks || []).map(b => (b.fullCode || b.code || '')).join(' ').toLowerCase();
-                                                if (!code) return undefined;
-                                                return (/class\s*=\s*["'][^"']*(?:swiper|slick|carousel|slideshow)/.test(code) ||
-                                                    code.includes('data-clone-chart') || code.includes('chartbargrow') ||
-                                                    code.includes('<video') || code.includes('youtube.com/embed') ||
-                                                    code.includes('type="range"')) ? 'rgba(245,158,11,0.1)' : undefined;
-                                            })() }}>
-                                        {(() => {
-                                            const code = (step.blocks || []).map(b => (b.fullCode || b.code || '')).join(' ').toLowerCase();
-                                            if (!code) return null;
-                                            return (/class\s*=\s*["'][^"']*(?:swiper|slick|carousel|slideshow)/.test(code) ||
-                                                code.includes('data-clone-chart') || code.includes('chartbargrow') ||
-                                                code.includes('<video') || code.includes('youtube.com/embed') ||
-                                                code.includes('type="range"'))
-                                                ? <span title="Esta etapa tem elementos complexos que podem precisar de ajuste" style={{ fontSize: '0.7rem', flexShrink: 0, filter: 'saturate(2)', lineHeight: 1 }}>⚠️</span>
-                                                : null;
-                                        })()}
-                                        <span style={{ fontSize: '0.68rem', fontWeight: 700, width: 18, textAlign: 'center', opacity: 0.4, flexShrink: 0, cursor: 'grab' }} title="Arraste para reordenar">{i + 1}</span>
-                                        {renamingStepIdx === i ? (
-                                            <input value={step.name} onChange={e => renameStep(i, e.target.value)} onClick={e => e.stopPropagation()}
-                                                autoFocus
-                                                style={{ flex: 1, background: '#fff', border: 'none', outline: 'none', color: 'inherit', fontSize: '0.73rem', fontWeight: 500, padding: '0 4px', minWidth: 0, cursor: 'text', borderRadius: 4 }}
-                                                onBlur={() => setRenamingStepIdx(null)}
-                                                onKeyDown={e => { if (e.key === 'Enter') setRenamingStepIdx(null); }} />
-                                        ) : (
-                                            <span style={{ flex: 1, fontSize: '0.73rem', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>{step.name}</span>
-                                        )}
-                                        <button onClick={e => { e.stopPropagation(); if (steps.length > 1) deleteStep(i); else showToastMsg('Mantenha ao menos 1 etapa'); }}
-                                            style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#d1d5db', padding: 2, display: 'flex', opacity: 0, flexShrink: 0, transition: 'opacity 0.15s' }}
-                                            title="Deletar etapa" onMouseOver={e => e.currentTarget.style.opacity = '1'} onMouseOut={e => e.currentTarget.style.opacity = '0'}
-                                            className="step-delete-btn">
-                                            <Trash2 size={11} />
-                                        </button>
-                                    </div>
-                                ))}
-                            </div>
-                            {/* Bottom: Add step + Modelos */}
-                            <div style={{ borderTop: '1px solid var(--border)', padding: '4px' }}>
-                                <button onClick={() => addStep()} style={{ width: '100%', padding: '6px 0', border: 'none', background: 'none', cursor: 'pointer', fontSize: '0.72rem', color: 'var(--text-muted)', fontWeight: 500 }}>+ Em branco</button>
-                                <div style={{ fontSize: '0.65rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', padding: '4px 6px 2px', letterSpacing: '0.5px' }}>Modelos</div>
-                                <div style={{ maxHeight: 140, overflowY: 'auto' }}>
-                                    {READY_STEPS.map(rs => (
-                                        <div key={rs.id}
-                                            style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 6px', cursor: 'pointer', borderRadius: 5, fontSize: '0.7rem', color: 'var(--text-primary)', transition: 'background 0.15s' }}
-                                            onMouseOver={e => e.currentTarget.style.background = '#eef2ff'}
-                                            onMouseOut={e => e.currentTarget.style.background = 'none'}
-                                            onClick={() => {
-                                                const ns = { id: `stp_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`, name: rs.name, blocks: JSON.parse(JSON.stringify(rs.blocks)) };
-                                                setSteps(s => [...s, ns]); setActiveStepIdx(steps.length); setSelectedBlockIdx(null);
-                                                showToastMsg(`${rs.name} adicionado!`);
-                                            }}>
-                                            <span style={{ fontSize: 14 }}>{rs.icon}</span>
-                                            <span style={{ fontWeight: 500 }}>{rs.name}</span>
-                                        </div>
-                                    ))}
-                                </div>
-                            </div>
-                        </div>
-
-                        {/* Component palette column — always show full gadgets */}
-                        <div style={{ flex: 1, overflowY: 'auto', paddingBottom: 20 }}>
-                            {CATEGORIES.map(cat => {
-                                const items = BLOCK_TYPES.filter(b => b.category === cat.key);
-                                if (!items.length) return null;
-                                return (
-                                    <div key={cat.key} className="sidebar-section">
-                                        <div className="sidebar-section-title">{cat.label}</div>
-                                        {items.map(bt => {
-                                            const htmlMap = {
-                                                        'text': '<p data-gadget-type="text" style="padding:8px 16px;font-size:16px;line-height:1.6;color:inherit">Seu texto aqui</p>',
-                                                        'capture': '<div data-gadget-type="capture" style="padding:8px 16px;margin:8px 0"><label style="display:block;font-size:14px;font-weight:600;margin-bottom:6px;color:inherit">Campo</label><input type="text" placeholder="Digite aqui" style="width:100%;padding:12px 14px;border-radius:10px;border:1px solid #d1d5db;font-size:15px;outline:none;box-sizing:border-box"/></div>',
-                                                        'email-capture': '<div data-gadget-type="email-input" style="padding:8px 16px;margin:8px 0"><label style="display:block;font-size:14px;font-weight:600;margin-bottom:6px;color:inherit">Seu e-mail</label><input type="email" placeholder="seu@email.com" style="width:100%;padding:12px 14px;border-radius:10px;border:1px solid #d1d5db;font-size:15px;outline:none;box-sizing:border-box"/></div>',
-                                                        'email-input': '<div data-gadget-type="email-input" style="padding:8px 16px;margin:8px 0"><label style="display:block;font-size:14px;font-weight:600;margin-bottom:6px;color:inherit">Seu e-mail</label><input type="email" placeholder="seu@email.com" style="width:100%;padding:12px 14px;border-radius:10px;border:1px solid #d1d5db;font-size:15px;outline:none;box-sizing:border-box"/></div>',
-                                                        'phone-capture': '<div data-gadget-type="phone-input" style="padding:8px 16px;margin:8px 0"><label style="display:block;font-size:14px;font-weight:600;margin-bottom:6px;color:inherit">Seu WhatsApp</label><input type="tel" placeholder="(00) 00000-0000" style="width:100%;padding:12px 14px;border-radius:10px;border:1px solid #d1d5db;font-size:15px;outline:none;box-sizing:border-box"/></div>',
-                                                        'phone-input': '<div data-gadget-type="phone-input" style="padding:8px 16px;margin:8px 0"><label style="display:block;font-size:14px;font-weight:600;margin-bottom:6px;color:inherit">Seu WhatsApp</label><input type="tel" placeholder="(00) 00000-0000" style="width:100%;padding:12px 14px;border-radius:10px;border:1px solid #d1d5db;font-size:15px;outline:none;box-sizing:border-box"/></div>',
-                                                        'textarea-input': '<div data-gadget-type="textarea-input" style="padding:8px 16px;margin:8px 0"><label style="display:block;font-size:14px;font-weight:600;margin-bottom:6px;color:inherit">Sua resposta</label><textarea placeholder="Digite sua resposta..." style="width:100%;padding:12px 14px;border-radius:10px;border:1px solid #d1d5db;font-size:15px;outline:none;box-sizing:border-box;min-height:80px;resize:vertical"></textarea></div>',
-                                                        'date-input': '<div data-gadget-type="date-input" style="padding:8px 16px;margin:8px 0"><label style="display:block;font-size:14px;font-weight:600;margin-bottom:6px;color:inherit">Data</label><input type="date" style="width:100%;padding:12px 14px;border-radius:10px;border:1px solid #d1d5db;font-size:15px;outline:none;box-sizing:border-box"/></div>',
-                                                        'choice': '<div data-gadget-type="choice" style="padding:12px 16px;display:flex;flex-direction:column;gap:8px"><div style="padding:14px;border:2px solid #e5e7eb;border-radius:12px;font-size:15px;font-weight:500;cursor:pointer;text-align:center">Opção A</div><div style="padding:14px;border:2px solid #e5e7eb;border-radius:12px;font-size:15px;font-weight:500;cursor:pointer;text-align:center">Opção B</div><div style="padding:14px;border:2px solid #e5e7eb;border-radius:12px;font-size:15px;font-weight:500;cursor:pointer;text-align:center">Opção C</div></div>',
-                                                        'single-choice': '<div data-gadget-type="single-choice" style="padding:12px 16px;display:flex;flex-direction:column;gap:8px"><div style="padding:14px;border:2px solid #e5e7eb;border-radius:12px;font-size:15px;font-weight:500;cursor:pointer;display:flex;align-items:center;gap:10px"><div style="width:20px;height:20px;border:2px solid #d1d5db;border-radius:50%;flex-shrink:0"></div>Opção 1</div><div style="padding:14px;border:2px solid #e5e7eb;border-radius:12px;font-size:15px;font-weight:500;cursor:pointer;display:flex;align-items:center;gap:10px"><div style="width:20px;height:20px;border:2px solid #d1d5db;border-radius:50%;flex-shrink:0"></div>Opção 2</div></div>',
-                                                        'image-select': '<div data-gadget-type="image-select" style="padding:12px 16px;display:flex;flex-direction:column;gap:8px"><div style="padding:14px;border:2px solid #e5e7eb;border-radius:12px;font-size:15px;font-weight:500;cursor:pointer;display:flex;align-items:center;gap:10px"><div style="width:20px;height:20px;border:2px solid #d1d5db;border-radius:4px;flex-shrink:0"></div>Opção A</div><div style="padding:14px;border:2px solid #e5e7eb;border-radius:12px;font-size:15px;font-weight:500;cursor:pointer;display:flex;align-items:center;gap:10px"><div style="width:20px;height:20px;border:2px solid #d1d5db;border-radius:4px;flex-shrink:0"></div>Opção B</div></div>',
-                                                        'yes-no': '<div data-gadget-type="yes-no" style="padding:16px;display:flex;gap:10px;justify-content:center"><div style="flex:1;padding:20px;border:2px solid #e5e7eb;border-radius:14px;text-align:center;cursor:pointer;font-size:15px;font-weight:600"><div style="font-size:28px;margin-bottom:6px">👍</div>Sim</div><div style="flex:1;padding:20px;border:2px solid #e5e7eb;border-radius:14px;text-align:center;cursor:pointer;font-size:15px;font-weight:600"><div style="font-size:28px;margin-bottom:6px">👎</div>Não</div></div>',
-                                                        'image': '<img data-gadget-type="image" src="https://placehold.co/600x200/e5e7eb/999?text=Sua+imagem" style="width:100%;max-width:100%;height:auto;display:block;margin:8px 0;border-radius:8px"/>',
-                                                        'video': '<div data-gadget-type="video" style="padding:16px;text-align:center"><div style="background:#f1f5f9;border-radius:12px;padding:40px 20px;border:2px dashed #d1d5db"><div style="font-size:32px;margin-bottom:8px">▶️</div><div style="font-size:14px;font-weight:600;color:#64748b">Cole o link do vídeo</div></div></div>',
-                                                        'button': '<button data-gadget-type="button" style="display:block;width:80%;margin:12px auto;padding:14px 24px;background:#2563eb;color:#fff;border:none;border-radius:10px;font-size:16px;font-weight:700;cursor:pointer;text-align:center">Clique aqui</button>',
-                                                        'logo': '<div data-gadget-type="logo" style="text-align:center;padding:12px"><img src="https://placehold.co/120x40/e5e7eb/999?text=Logo" style="height:40px;object-fit:contain"/></div>',
-                                                        'spacer': '<div data-gadget-type="spacer" style="height:32px"></div>',
-                                                        'carousel': '<div data-gadget-type="carousel" data-carousel style="padding:16px;overflow-x:auto;display:flex;gap:12px;scroll-snap-type:x mandatory"><div style="min-width:260px;flex-shrink:0;border-radius:12px;overflow:hidden;scroll-snap-align:start;border:1px solid #e5e7eb"><img src="https://placehold.co/260x180/e5e7eb/999?text=Slide+1" style="width:100%;height:180px;object-fit:cover"/><div style="padding:10px;font-size:14px;font-weight:600">Slide 1</div></div><div style="min-width:260px;flex-shrink:0;border-radius:12px;overflow:hidden;scroll-snap-align:start;border:1px solid #e5e7eb"><img src="https://placehold.co/260x180/e5e7eb/999?text=Slide+2" style="width:100%;height:180px;object-fit:cover"/><div style="padding:10px;font-size:14px;font-weight:600">Slide 2</div></div></div>',
-                                                        'before-after': '<div data-gadget-type="before-after" style="padding:16px;display:flex;gap:8px"><div style="flex:1;text-align:center"><div style="font-size:12px;font-weight:700;color:#ef4444;margin-bottom:6px">ANTES</div><img src="https://placehold.co/150x200/fef2f2/ef4444?text=Antes" style="width:100%;border-radius:8px"/></div><div style="flex:1;text-align:center"><div style="font-size:12px;font-weight:700;color:#10b981;margin-bottom:6px">DEPOIS</div><img src="https://placehold.co/150x200/ecfdf5/10b981?text=Depois" style="width:100%;border-radius:8px"/></div></div>',
-                                                        'chart': '<div data-gadget-type="chart" style="padding:16px;margin:10px 0"><div style="font-size:14px;font-weight:700;margin-bottom:12px;text-align:center;color:inherit">Resultados</div><div style="display:flex;align-items:flex-end;gap:8px;height:120px;padding:0 10px"><div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px"><div style="width:100%;background:linear-gradient(to top,#6366f1,#818cf8);border-radius:6px 6px 0 0;height:80%"></div><span style="font-size:11px;font-weight:600">A</span></div><div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px"><div style="width:100%;background:linear-gradient(to top,#f59e0b,#fbbf24);border-radius:6px 6px 0 0;height:55%"></div><span style="font-size:11px;font-weight:600">B</span></div><div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px"><div style="width:100%;background:linear-gradient(to top,#10b981,#34d399);border-radius:6px 6px 0 0;height:90%"></div><span style="font-size:11px;font-weight:600">C</span></div></div></div>',
-                                                        'bmi': '<div data-gadget-type="bmi" style="padding:16px;text-align:center"><div style="font-size:14px;font-weight:700;margin-bottom:8px">IMC</div><div style="width:100px;height:100px;border-radius:50%;background:conic-gradient(#10b981 0% 65%,#e5e7eb 65% 100%);margin:0 auto;position:relative"><div style="position:absolute;inset:25%;background:#fff;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:800">24</div></div></div>',
-                                                        'metrics': '<div data-gadget-type="metrics" style="padding:16px;display:flex;gap:8px"><div style="flex:1;text-align:center;padding:12px;background:#f0f5ff;border-radius:10px"><div style="font-size:20px;font-weight:800;color:#2563eb">1850</div><div style="font-size:11px;color:#64748b">kcal/dia</div></div><div style="flex:1;text-align:center;padding:12px;background:#ecfdf5;border-radius:10px"><div style="font-size:20px;font-weight:800;color:#10b981">68kg</div><div style="font-size:11px;color:#64748b">peso ideal</div></div></div>',
-                                                        'alert': '<div data-gadget-type="alert" style="padding:14px 16px;margin:8px;background:#fef2f2;border:1px solid #fecaca;border-radius:12px;display:flex;gap:10px;align-items:center"><span style="font-size:20px">⚠️</span><div style="font-size:14px;font-weight:600;color:#991b1b">Atenção! Mensagem importante aqui.</div></div>',
-                                                        'notification': '<div data-gadget-type="notification" style="padding:12px 16px;margin:8px;background:#ecfdf5;border:1px solid #a7f3d0;border-radius:12px;display:flex;gap:10px;align-items:center"><span style="font-size:18px">🔔</span><div style="font-size:14px;font-weight:600;color:#065f46">Notificação de exemplo</div></div>',
-                                                        'timer': '<div data-gadget-type="timer" style="text-align:center;padding:12px"><div style="font-size:28px;font-weight:800;font-family:monospace;color:#ef4444">05:00</div><div style="font-size:11px;color:#64748b">Oferta expira em</div></div>',
-                                                        'loading': '<div data-gadget-type="loading" style="text-align:center;padding:32px 16px"><div style="width:40px;height:40px;border:3px solid #e5e7eb;border-top-color:#6366f1;border-radius:50%;margin:0 auto 12px;animation:spin 1s linear infinite"></div><div style="font-size:14px;font-weight:600;color:#374151">Analisando...</div></div>',
-                                                        'progress-bar': '<div data-gadget-type="progress-bar" style="text-align:center;padding:32px 16px"><div style="font-size:14px;font-weight:700;margin-bottom:12px" data-pb-title>Analisando seu perfil...</div><div style="height:12px;background:#e5e7eb;border-radius:6px;overflow:hidden;margin-bottom:8px"><div data-pb-fill style="height:100%;width:0%;background:linear-gradient(90deg,#10b981,#34d399);border-radius:6px;transition:width 0.1s linear"></div></div><div data-pb-pct style="font-size:12px;font-weight:700;color:#10b981">0%</div></div><script data-pb-anim>(function(){var f=document.querySelector("[data-pb-fill]");var p=document.querySelector("[data-pb-pct]");if(!f||!p)return;var start=Date.now();var dur=5000;var iv=setInterval(function(){var e=Date.now()-start;var pct=Math.min(100,Math.round(e/dur*100));f.style.width=pct+"%";p.textContent=pct+"%";if(pct>=100){clearInterval(iv);setTimeout(function(){window.parent.postMessage({type:"clone-advance"},"*")},600)}},50)})()</script>',
-                                                        'risk-chart': '<div data-gadget-type="risk-chart" style="padding:16px;text-align:center"><div style="font-size:14px;font-weight:700;margin-bottom:12px">Seu nível de risco</div><svg data-rc-svg viewBox="0 0 320 180" style="width:100%;max-width:380px"><defs><linearGradient id="rcG" x1="0" x2="1" y1="0" y2="0"><stop offset="0%" stop-color="#22c55e"/><stop offset="30%" stop-color="#eab308"/><stop offset="60%" stop-color="#f97316"/><stop offset="100%" stop-color="#ef4444"/></linearGradient><linearGradient id="rcGF" x1="0" x2="1" y1="0" y2="0"><stop offset="0%" stop-color="#22c55e" stop-opacity="0.35"/><stop offset="30%" stop-color="#eab308" stop-opacity="0.35"/><stop offset="60%" stop-color="#f97316" stop-opacity="0.35"/><stop offset="100%" stop-color="#ef4444" stop-opacity="0.35"/></linearGradient></defs><line x1="10" y1="150" x2="310" y2="150" stroke="#475569" stroke-width="1"/><path data-rc-area fill="url(#rcGF)" d="M10 150 L310 150 Z"/><path data-rc-line fill="none" stroke="url(#rcG)" stroke-width="3" stroke-linecap="round" d="M10 150"/><g data-rc-dots></g><g data-rc-label style="opacity:0"></g><text x="10" y="176" text-anchor="middle" fill="#94a3b8" font-size="9" font-weight="500">Baixo</text><text x="85" y="176" text-anchor="middle" fill="#94a3b8" font-size="9" font-weight="500">Aceitável</text><text x="160" y="176" text-anchor="middle" fill="#94a3b8" font-size="9" font-weight="500">Normal</text><text x="235" y="176" text-anchor="middle" fill="#94a3b8" font-size="9" font-weight="500">Médio</text><text x="310" y="176" text-anchor="middle" fill="#94a3b8" font-size="9" font-weight="500">Alto</text></svg></div><script data-rc-anim>(function(){var vals=[0.08,0.18,0.35,0.62,0.95];var W=300,H=120,pL=10,pT=30;var uIdx=3;var dur=3000;var start=Date.now();var area=document.querySelector("[data-rc-area]");var line=document.querySelector("[data-rc-line]");var dots=document.querySelector("[data-rc-dots]");var lbl=document.querySelector("[data-rc-label]");if(!area||!line)return;function anim(){var t=Math.min(1,(Date.now()-start)/dur);var pts=vals.map(function(v,i){return{x:pL+i/4*W,y:pT+H-v*t*H}});var d="M "+pts[0].x+" "+pts[0].y;for(var i=1;i<pts.length;i++){var p=pts[i-1],c=pts[i];var cx1=p.x+(c.x-p.x)*0.5;d+=" C "+cx1+" "+p.y+" "+cx1+" "+c.y+" "+c.x+" "+c.y}line.setAttribute("d",d);area.setAttribute("d",d+" L "+pts[4].x+" 150 L "+pts[0].x+" 150 Z");var dh="";for(var i=0;i<pts.length;i++){var r=i===uIdx?6:4;var f=i===uIdx?"#fff":"url(#rcG)";var s=i===uIdx?" stroke=\\"#eab308\\" stroke-width=\\"2\\"":"";dh+="<circle cx=\\""+pts[i].x+"\\" cy=\\""+pts[i].y+"\\" r=\\""+r+"\\" fill=\\""+f+"\\""+s+" opacity=\\""+(t>0.1?1:0)+"\\"/>";}dots.innerHTML=dh;if(t>0.5){lbl.style.opacity=Math.min(1,(t-0.5)*4);var ux=pts[uIdx].x,uy=pts[uIdx].y;lbl.innerHTML="<rect x=\\""+(ux-22)+"\\" y=\\""+(uy-28)+"\\" width=\\"44\\" height=\\"20\\" rx=\\"10\\" fill=\\"#eab308\\"/><text x=\\""+ux+"\\" y=\\""+(uy-15)+"\\" text-anchor=\\"middle\\" fill=\\"#fff\\" font-size=\\"10\\" font-weight=\\"700\\">Você</text>"}if(t<1){requestAnimationFrame(anim)}else{setTimeout(function(){window.parent.postMessage({type:"clone-advance"},"*")},1200)}}anim()})()</script>',
-                                                        'testimonial': '<div data-gadget-type="testimonial" style="padding:16px;display:flex;gap:10px;align-items:flex-start"><div style="width:40px;height:40px;border-radius:50%;background:#e5e7eb;flex-shrink:0"></div><div><div style="font-size:13px;font-weight:700;color:#111">Maria S.</div><div style="font-size:11px;color:#f59e0b;margin-bottom:4px">★★★★★</div><div style="font-size:13px;color:#4b5563">"Resultado incrível! Recomendo demais."</div></div></div>',
-                                                        'social-proof': '<div data-gadget-type="social-proof" style="padding:16px;display:flex;gap:10px;align-items:flex-start"><div style="width:40px;height:40px;border-radius:50%;background:#e5e7eb;flex-shrink:0"></div><div><div style="font-size:13px;font-weight:700;color:#111">Maria S.</div><div style="font-size:11px;color:#f59e0b;margin-bottom:4px">★★★★★</div><div style="font-size:13px;color:#4b5563">"Resultado incrível! Recomendo demais."</div></div></div>',
-                                                        'faq': '<div data-gadget-type="faq" style="padding:12px 16px"><details style="border:1px solid #e5e7eb;border-radius:10px;padding:12px;margin-bottom:8px"><summary style="font-weight:600;font-size:14px;cursor:pointer">Pergunta frequente 1?</summary><p style="margin-top:8px;font-size:13px;color:#64748b">Resposta da pergunta.</p></details><details style="border:1px solid #e5e7eb;border-radius:10px;padding:12px"><summary style="font-weight:600;font-size:14px;cursor:pointer">Pergunta frequente 2?</summary><p style="margin-top:8px;font-size:13px;color:#64748b">Resposta da pergunta.</p></details></div>',
-                                                        'price': '<div data-gadget-type="price" style="padding:16px;text-align:center;border:2px solid #e5e7eb;border-radius:14px;margin:8px"><div style="font-size:12px;font-weight:700;color:#6366f1;text-transform:uppercase;margin-bottom:4px">Premium</div><div style="font-size:32px;font-weight:800;color:#111">R$97</div><div style="font-size:12px;color:#64748b;margin-bottom:12px">pagamento único</div><button style="width:100%;padding:12px;background:#6366f1;color:#fff;border:none;border-radius:10px;font-size:15px;font-weight:700;cursor:pointer">Quero agora</button></div>',
-                                                        'pricing': '<div data-gadget-type="price" style="padding:16px;text-align:center;border:2px solid #e5e7eb;border-radius:14px;margin:8px"><div style="font-size:12px;font-weight:700;color:#6366f1;text-transform:uppercase;margin-bottom:4px">Premium</div><div style="font-size:32px;font-weight:800;color:#111">R$97</div><div style="font-size:12px;color:#64748b;margin-bottom:12px">pagamento único</div><button style="width:100%;padding:12px;background:#6366f1;color:#fff;border:none;border-radius:10px;font-size:15px;font-weight:700;cursor:pointer">Quero agora</button></div>',
-                                                        'insight': '<div data-gadget-type="insight" style="padding:16px;background:#fffbeb;border-radius:12px;border-left:4px solid #f59e0b;margin:8px"><div style="font-size:13px;font-weight:700;color:#92400e;margin-bottom:4px">💡 Insight</div><div style="font-size:14px;color:#78350f">Dica personalizada baseada nas suas respostas.</div></div>',
-                                                        'result': '<div data-gadget-type="result" style="padding:20px 16px;text-align:center;background:linear-gradient(135deg,#f0f5ff,#ede9fe);border-radius:12px;margin:8px"><div style="font-size:40px;margin-bottom:8px">🎉</div><div style="font-size:20px;font-weight:800;color:#1e1b4b;margin-bottom:4px">Seu Resultado</div><p style="font-size:14px;color:#64748b">Parabéns! Veja sua personalização.</p></div>',
-                                                        'welcome': '<div data-gadget-type="welcome" style="padding:32px 16px;text-align:center;background:linear-gradient(135deg,#6366f1,#8b5cf6);border-radius:0;color:#fff"><div style="font-size:24px;font-weight:800;margin-bottom:8px">Título do Quiz</div><p style="font-size:14px;opacity:0.85;margin-bottom:20px">Descubra algo incrível sobre você</p><button style="padding:14px 32px;background:#fff;color:#6366f1;border:none;border-radius:10px;font-size:16px;font-weight:700;cursor:pointer">Começar →</button></div>',
-                                                        'cover': '<div data-gadget-type="welcome" style="padding:32px 16px;text-align:center;background:linear-gradient(135deg,#6366f1,#8b5cf6);border-radius:0;color:#fff"><div style="font-size:24px;font-weight:800;margin-bottom:8px">Título do Quiz</div><p style="font-size:14px;opacity:0.85;margin-bottom:20px">Descubra algo incrível sobre você</p><button style="padding:14px 32px;background:#fff;color:#6366f1;border:none;border-radius:10px;font-size:16px;font-weight:700;cursor:pointer">Começar →</button></div>',
-                                                        'level': '<div data-gadget-type="level" style="padding:12px 16px"><div style="font-size:13px;font-weight:600;color:#374151;margin-bottom:6px">Progresso</div><div style="height:10px;background:#e5e7eb;border-radius:5px;overflow:hidden"><div style="height:100%;width:65%;background:linear-gradient(90deg,#6366f1,#8b5cf6);border-radius:5px"></div></div><div style="font-size:11px;color:#9ca3af;margin-top:4px;text-align:right">65%</div></div>',
-                                                        'arguments': '<div data-gadget-type="arguments" style="padding:12px 16px"><div style="display:flex;gap:10px;align-items:flex-start;margin-bottom:10px"><span style="font-size:18px">✅</span><div style="font-size:14px;font-weight:500;color:#374151">Benefício número 1</div></div><div style="display:flex;gap:10px;align-items:flex-start;margin-bottom:10px"><span style="font-size:18px">✅</span><div style="font-size:14px;font-weight:500;color:#374151">Benefício número 2</div></div><div style="display:flex;gap:10px;align-items:flex-start"><span style="font-size:18px">✅</span><div style="font-size:14px;font-weight:500;color:#374151">Benefício número 3</div></div></div>',
-                                                        'audio': '<div data-gadget-type="audio" style="padding:16px;text-align:center"><div style="background:#f1f5f9;border-radius:12px;padding:20px;border:2px dashed #d1d5db"><div style="font-size:24px;margin-bottom:6px">🔊</div><div style="font-size:13px;font-weight:600;color:#64748b">Player de áudio</div></div></div>',
-                                                        'video-response': '<div data-gadget-type="video-response" style="padding:16px"><div style="background:#f8fafc;border-radius:12px;padding:20px;text-align:center;border:1px solid #e2e8f0;margin-bottom:10px"><div style="font-size:28px;margin-bottom:6px">🎥</div><div style="font-size:13px;font-weight:600;color:#64748b">Vídeo</div></div><div style="display:flex;flex-direction:column;gap:8px"><div style="padding:12px;border:2px solid #e5e7eb;border-radius:10px;font-size:14px;font-weight:500;text-align:center;cursor:pointer">Opção 1</div><div style="padding:12px;border:2px solid #e5e7eb;border-radius:10px;font-size:14px;font-weight:500;text-align:center;cursor:pointer">Opção 2</div></div></div>',
-                                                    };
-                                            return (
-                                            <div key={bt.type} className="sidebar-item" draggable
-                                                onDragStart={() => {
-                                                    setDragFromSidebar(bt.type);
-                                                    window.__draggedGadgetHtml = translateGadgetHtml(htmlMap[bt.type] || `<div data-gadget-type="${bt.type}" style="padding:16px;text-align:center;border:2px dashed #d1d5db;border-radius:10px;margin:8px;font-size:14px;color:#9ca3af">${bt.label}</div>`, cloneLang);
-                                                }}
-                                                onDragEnd={() => { setDragFromSidebar(null); setDragOverBlockIdx(null); window.__draggedGadgetHtml = null; }}
-                                                onClick={() => {
-                                                    if (activeStep?.blocks?.[0]?.type?.startsWith('html-') && window.__cloneEditorApi?.insertElement) {
-                                                        const html = htmlMap[bt.type] || `<div data-gadget-type="${bt.type}" style="padding:16px;text-align:center;border:2px dashed #d1d5db;border-radius:10px;margin:8px;font-size:14px;color:#9ca3af">${bt.label}</div>`;
-                                                        window.__cloneEditorApi.insertElement(html);
-                                                    } else {
-                                                        if (!steps.length) addStep('Etapa 1');
-                                                        addBlockToStep(bt.type);
-                                                    }
-                                                }}>
-                                                <div className="sidebar-item-icon">{bt.icon}</div>
-                                                <span>{bt.label}</span>
-                                            </div>
-                                            );
-                                        })}
-                                    </div>
-                                );
-                            })}
-                        </div>
-                    </div>
-
-                    {/* CENTER CANVAS */}
-                    <div className="builder-canvas" onClick={(e) => { if (e.target === e.currentTarget) setSelectedBlockIdx(null); }} style={activeStep?.blocks?.[0]?.type === 'html-script' ? { padding: 0, display: 'flex' } : {}}>
-                        {activeStep?.blocks?.[0]?.type === 'html-script' ? (
-                            <CloneEditor
-                                block={activeStep.blocks[0]}
-                                onBlockChange={(updatedBlock) => updateBlock(0, updatedBlock)}
-                                stepName={activeStep.name}
-                                primaryColor={config.primaryColor}
-                                onElementSelect={(info) => setCloneSelectedEl(info)}
-                                lang={cloneLang}
-                            />
-                        ) : (
-                            <PhonePreview step={activeStep} selectedBlockId={selectedBlock?.id}
-                                onSelectBlock={i => setSelectedBlockIdx(i)} onDeleteBlock={i => deleteBlock(i)}
-                                onBlockChange={(i, b) => updateBlock(i, b)} config={config} viewMode={viewMode}
-                                onDropBlock={handleDropBlock} onDragOverBlock={setDragOverBlockIdx}
-                                dragOverBlockIdx={dragFromSidebar ? dragOverBlockIdx : null} onReorderBlock={reorderBlock} />
-                        )}
-                        {/* Bottom toolbar */}
-                        <div style={{ position: 'fixed', bottom: 16, left: '50%', transform: 'translateX(-50%)', display: 'flex', gap: 4, background: '#fff', border: '1px solid var(--border)', borderRadius: 10, padding: '4px 8px', boxShadow: 'var(--shadow-md)', zIndex: 50 }}>
-                            <button className="topbar-icon" style={{ width: 28, height: 28, border: 'none' }} title="Desfazer"><Undo2 size={14} /></button>
-                            <button className="topbar-icon" style={{ width: 28, height: 28, border: 'none' }} title="Refazer"><Redo2 size={14} /></button>
-                            <div style={{ width: 1, background: 'var(--border)', margin: '4px 2px' }} />
-                            <button className={`topbar-icon`} style={{ width: 28, height: 28, border: 'none', color: viewMode === 'mobile' ? 'var(--primary)' : undefined }} onClick={() => setViewMode('mobile')} title="Mobile"><Smartphone size={14} /></button>
-                            <button className={`topbar-icon`} style={{ width: 28, height: 28, border: 'none', color: viewMode === 'desktop' ? 'var(--primary)' : undefined }} onClick={() => setViewMode('desktop')} title="Desktop"><Monitor size={14} /></button>
-                            <div style={{ width: 1, background: 'var(--border)', margin: '4px 2px' }} />
-                            <button
-                                className="topbar-icon"
-                                style={{ width: 28, height: 28, border: 'none', color: aiStepLoading ? '#94a3b8' : 'var(--primary)', position: 'relative' }}
-                                title="Gerar etapa com IA (analisa etapas existentes + produto)"
-                                disabled={aiStepLoading}
-                                onClick={async () => {
-                                    if (aiStepLoading) return;
-                                    setAiStepLoading(true);
-                                    showToastMsg('🤖 Gerando etapa com IA...');
-                                    try {
-                                        const API_BASE = import.meta.env.DEV ? 'http://localhost:3001' : '';
-                                        const existingSteps = steps.map((s, i) => ({
-                                            step: i + 1,
-                                            name: s.name,
-                                            blocks: s.blocks.map(b => ({ type: b.type, text: b.text || b.headline || '', options: (b.options || []).map(o => o.text) }))
-                                        }));
-                                        const res = await fetch(`${API_BASE}/api/generate-step`, {
-                                            method: 'POST',
-                                            headers: { 'Content-Type': 'application/json' },
-                                            body: JSON.stringify({
-                                                existingSteps,
-                                                productName: config.name || 'Quiz',
-                                                niche: config.niche || 'outro',
-                                                totalSteps: steps.length,
-                                                productDescription: config.productDescription || '',
-                                                targetAudience: config.targetAudience || '',
-                                            }),
-                                        });
-                                        if (!res.ok) throw new Error('Erro ao gerar');
-                                        const data = await res.json();
-                                        if (data.step) {
-                                            const ns = { id: `stp_ai_${Date.now()}`, name: data.step.name || `Etapa ${steps.length + 1}`, blocks: data.step.blocks || [data.step] };
-                                            setSteps(s => [...s, ns]); setActiveStepIdx(steps.length);
-                                            showToastMsg(`Etapa "${ns.name}" criada com IA!`);
-                                        }
-                                    } catch (err) {
-                                        showToastMsg('Erro ao gerar: ' + (err.message || 'tente novamente'));
-                                    }
-                                    setAiStepLoading(false);
-                                }}
-                            >
-                                {aiStepLoading ? (
-                                    <div style={{ width: 14, height: 14, borderRadius: '50%', border: '2px solid #e2e8f0', borderTopColor: 'var(--primary)', animation: 'spin 1s linear infinite' }} />
-                                ) : '🤖'}
-                            </button>
-                        </div>
-                    </div>
-
-                    {/* RIGHT PANEL */}
-                    <div className="builder-right">
-                        {/* Clone element properties panel */}
-                        {activeStep?.blocks?.[0]?.type === 'html-script' && cloneSelectedEl ? (
+    function renderCloneRightPanel() {
+        return (
                             cloneSelectedEl.type === 'gadget' ? (
                                 /* ── Native PropertiesPanel for gadgets ── */
                                 (() => {
@@ -906,159 +838,147 @@ export default function PageBuilder() {
                                 </details>
                             </div>
                             )
-                        ) : selectedBlock ? (
-                            <PropertiesPanel block={selectedBlock} onChange={b => selectedBlockIdx !== null && updateBlock(selectedBlockIdx, b)} config={config} onConfigChange={updateConfig} steps={steps} />
-                        ) : (
-                            /* Step settings / Aparência when no block selected */
-                            <div style={{ padding: 16 }}>
-                                <div style={{ display: 'flex', borderBottom: '1px solid var(--border)', marginBottom: 14, gap: 0 }}>
-                                    <div onClick={() => setRightPanelTab('etapa')} style={{ flex: 1, padding: '8px 0', textAlign: 'center', fontSize: '0.78rem', fontWeight: rightPanelTab === 'etapa' ? 600 : 500, borderBottom: rightPanelTab === 'etapa' ? '2px solid var(--text-primary)' : '2px solid transparent', cursor: 'pointer', color: rightPanelTab === 'etapa' ? 'var(--text-primary)' : 'var(--text-muted)' }}>Etapa</div>
-                                    <div onClick={() => setRightPanelTab('aparencia')} style={{ flex: 1, padding: '8px 0', textAlign: 'center', fontSize: '0.78rem', fontWeight: rightPanelTab === 'aparencia' ? 600 : 500, borderBottom: rightPanelTab === 'aparencia' ? '2px solid var(--text-primary)' : '2px solid transparent', cursor: 'pointer', color: rightPanelTab === 'aparencia' ? 'var(--text-primary)' : 'var(--text-muted)' }}>Aparência</div>
-                                </div>
+        );
+    }
 
-                                {rightPanelTab === 'etapa' ? (
-                                    <>
-                                        <div className="form-group">
-                                            <label className="label">Sem título</label>
-                                            <input className="input" placeholder="Ex: Etapa 1" value={activeStep?.name || ''} onChange={e => activeStepIdx >= 0 && renameStep(activeStepIdx, e.target.value)} />
-                                        </div>
-                                        {/* Step-level routing */}
-                                        <div className="form-group">
-                                            <label className="label">↳ Após esta etapa, ir para:</label>
-                                            <select className="input"
-                                                value={activeStep?.goToStep || ''}
-                                                onChange={e => {
-                                                    const val = e.target.value || null;
-                                                    setSteps(s => s.map((st, i) => i === activeStepIdx ? { ...st, goToStep: val } : st));
-                                                }}
-                                                style={{ color: activeStep?.goToStep ? 'var(--primary)' : 'var(--text-muted)', fontSize: '0.82rem' }}>
-                                                <option value="">Próxima etapa (padrão)</option>
-                                                {steps.map((s, si) => (
-                                                    <option key={s.id} value={s.id} disabled={si === activeStepIdx}>{si + 1}. {s.name}</option>
-                                                ))}
-                                                <option value="__end">🏁 Finalizar quiz</option>
-                                            </select>
-                                            {activeStep?.goToStep && (
-                                                <div style={{ fontSize: '0.65rem', color: 'var(--primary)', marginTop: 4, display: 'flex', alignItems: 'center', gap: 4 }}>
-                                                    <GitBranch size={12} style={{ display: 'inline', marginRight: 4 }} /> Rota condicional ativa
-                                                </div>
-                                            )}
-                                        </div>
-                                        <div style={{ marginBottom: 14 }}>
-                                            <div style={{ fontSize: '0.78rem', fontWeight: 600, marginBottom: 8 }}>Header</div>
-                                            {[{ key: 'showLogo', label: 'Mostrar logo' }, { key: 'showProgress', label: 'Mostrar progresso' }, { key: 'allowBack', label: 'Permitir voltar' }].map(opt => (
-                                                <label key={opt.key} className="toggle-wrapper" style={{ marginBottom: 8 }}>
-                                                    <label className="toggle"><input type="checkbox" checked={config[opt.key] !== false} onChange={e => updateConfig(opt.key, e.target.checked)} /><span className="toggle-slider" /></label>
-                                                    <span style={{ fontSize: '0.8rem' }}>{opt.label}</span>
-                                                </label>
-                                            ))}
-                                        </div>
-                                    </>
-                                ) : (
-                                    /* ═══ APARÊNCIA TAB ═══ */
-                                    <>
-                                        {/* Background Color */}
-                                        <div className="form-group">
-                                            <label className="label">Cor de fundo</label>
-                                            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                                                <input type="color" value={config.bgColor || '#ffffff'} onChange={e => updateConfig('bgColor', e.target.value)}
-                                                    style={{ width: 36, height: 36, border: '1px solid var(--border)', borderRadius: 8, padding: 2, cursor: 'pointer' }} />
-                                                <input className="input" value={config.bgColor || ''} placeholder="#ffffff"
-                                                    onChange={e => updateConfig('bgColor', e.target.value)}
-                                                    style={{ flex: 1, fontSize: '0.75rem', fontFamily: 'monospace' }} />
-                                                {config.bgColor && (
-                                                    <button onClick={() => updateConfig('bgColor', '')}
-                                                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94a3b8', fontSize: '0.7rem' }}>✕</button>
-                                                )}
-                                            </div>
-                                        </div>
+    function renderSaveStatus() {
+        if (!steps.some(st => st.blocks.length)) return null;
+        const map = {
+            saving: { cls: '', text: 'Salvando…' },
+            dirty: { cls: 'dirty', text: 'Alterações não salvas' },
+            saved: { cls: 'ok', text: published ? '✓ Publicado' : '✓ Salvo' },
+            draft: { cls: 'dirty', text: 'Rascunho · não publicado' },
+            error: { cls: 'dirty', text: 'Erro ao salvar' },
+            idle: { cls: '', text: quizId || editId ? '' : 'Não salvo' },
+        };
+        const st = map[saveState] || map.idle;
+        return st.text ? <span className={`qb-save ${st.cls}`}>{st.text}</span> : null;
+    }
 
-                                        {/* Background Image */}
-                                        <div className="form-group">
-                                            <label className="label">Imagem de fundo</label>
-                                            {!config.bgImage ? (
-                                                <div
-                                                    onClick={() => { const inp = document.createElement('input'); inp.type = 'file'; inp.accept = 'image/*'; inp.onchange = e => { const f = e.target.files[0]; if (f) { const r = new FileReader(); r.onload = ev => updateConfig('bgImage', ev.target.result); r.readAsDataURL(f); } }; inp.click(); }}
-                                                    style={{ padding: '14px 12px', border: '2px dashed var(--border)', borderRadius: 8, textAlign: 'center', cursor: 'pointer', fontSize: '0.72rem', color: 'var(--text-muted)', transition: 'all 0.15s' }}
-                                                    onMouseOver={e => { e.currentTarget.style.borderColor = 'var(--primary)'; e.currentTarget.style.background = '#f0f5ff'; }}
-                                                    onMouseOut={e => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.background = 'none'; }}>
-                                                    <div style={{ fontSize: 20, marginBottom: 4 }}>🖼️</div>
-                                                    Clique para enviar imagem
-                                                </div>
-                                            ) : (
-                                                <div style={{ borderRadius: 8, overflow: 'hidden', border: '1px solid var(--border)' }}>
-                                                    <img src={config.bgImage} alt="Fundo" style={{ width: '100%', height: 80, objectFit: 'cover' }} />
-                                                    <button onClick={() => updateConfig('bgImage', '')}
-                                                        style={{ width: '100%', padding: '5px', background: '#fef2f2', border: 'none', cursor: 'pointer', fontSize: '0.7rem', color: '#dc2626', fontWeight: 500 }}>✕ Remover</button>
-                                                </div>
-                                            )}
-                                        </div>
+    function renderToast() {
+        if (!toast) return null;
+        return <div style={{ position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)', background: '#111', color: '#fff', padding: '10px 20px', borderRadius: 10, fontSize: '0.8rem', fontWeight: 600, zIndex: 9999, boxShadow: '0 4px 20px rgba(0,0,0,0.25)', animation: 'fadeIn 0.2s' }}>{toast}</div>;
+    }
 
-                                        {/* Logo */}
-                                        <div className="form-group">
-                                            <label className="label">Logo</label>
-                                            {!config.logoUrl ? (
-                                                <div
-                                                    onClick={() => { const inp = document.createElement('input'); inp.type = 'file'; inp.accept = 'image/*'; inp.onchange = e => { const f = e.target.files[0]; if (f) { const r = new FileReader(); r.onload = ev => updateConfig('logoUrl', ev.target.result); r.readAsDataURL(f); } }; inp.click(); }}
-                                                    style={{ padding: '14px 12px', border: '2px dashed var(--border)', borderRadius: 8, textAlign: 'center', cursor: 'pointer', fontSize: '0.72rem', color: 'var(--text-muted)', transition: 'all 0.15s' }}
-                                                    onMouseOver={e => { e.currentTarget.style.borderColor = 'var(--primary)'; e.currentTarget.style.background = '#f0f5ff'; }}
-                                                    onMouseOut={e => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.background = 'none'; }}>
-                                                    <div style={{ fontSize: 20, marginBottom: 4 }}>📷</div>
-                                                    Clique para enviar logo
-                                                </div>
-                                            ) : (
-                                                <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: 8, background: '#f8fafc', borderRadius: 8, border: '1px solid var(--border)' }}>
-                                                    <img src={config.logoUrl} alt="Logo" style={{ width: 40, height: 40, objectFit: 'contain', borderRadius: 6 }} />
-                                                    <span style={{ flex: 1, fontSize: '0.7rem', color: 'var(--text-muted)' }}>Logo carregado</span>
-                                                    <button onClick={() => updateConfig('logoUrl', '')}
-                                                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#dc2626', fontSize: '0.7rem', fontWeight: 600 }}>✕</button>
-                                                </div>
-                                            )}
-                                        </div>
+    // ═══ MAIN RENDER ═══
 
-                                        {/* Primary Color */}
-                                        <div className="form-group">
-                                            <label className="label">Cor primária</label>
-                                            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                                                <input type="color" value={config.primaryColor || '#2563eb'} onChange={e => updateConfig('primaryColor', e.target.value)}
-                                                    style={{ width: 36, height: 36, border: '1px solid var(--border)', borderRadius: 8, padding: 2, cursor: 'pointer' }} />
-                                                <input className="input" value={config.primaryColor || ''} placeholder="#2563eb"
-                                                    onChange={e => updateConfig('primaryColor', e.target.value)}
-                                                    style={{ flex: 1, fontSize: '0.75rem', fontFamily: 'monospace' }} />
-                                            </div>
-                                        </div>
+    // ═══ ONBOARDING SCREEN ═══
+    if (showOnboarding) return (
+        <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: 'linear-gradient(135deg, #f8f9ff 0%, #f0f4ff 100%)', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+            <div style={{ width: '100%', maxWidth: 520, background: '#fff', borderRadius: 16, padding: '36px 32px', boxShadow: '0 8px 40px rgba(0,0,0,0.08)' }}>
+                <div style={{ textAlign: 'center', marginBottom: 28 }}>
+                    <div style={{ fontSize: 40, marginBottom: 8 }}>🚀</div>
+                    <h1 style={{ fontSize: '1.4rem', fontWeight: 700, color: '#1a1a2e', marginBottom: 6 }}>Criar novo Quiz</h1>
+                    <p style={{ fontSize: '0.82rem', color: '#64748b' }}>Conte sobre seu produto para a IA criar etapas melhores</p>
+                </div>
+                <div className="form-group">
+                    <label className="label">Nome do produto *</label>
+                    <input className="input" value={config.name} placeholder="Ex: Leaply, Keto Diet, Skin Care Pro" onChange={e => updateConfig('name', e.target.value)} autoFocus />
+                </div>
+                <div className="form-group">
+                    <label className="label">Nicho</label>
+                    <select className="input" value={config.niche} onChange={e => updateConfig('niche', e.target.value)}>
+                        {['saude', 'fitness', 'beleza', 'educacao', 'financas', 'tech', 'alimentacao', 'marketing', 'ecommerce', 'outro'].map(n => (
+                            <option key={n} value={n}>{n.charAt(0).toUpperCase() + n.slice(1)}</option>
+                        ))}
+                    </select>
+                </div>
+                <div className="form-group">
+                    <label className="label">Sobre o produto</label>
+                    <textarea className="input" rows={3} value={config.productDescription} placeholder="Descreva brevemente o que seu produto faz, pra quem é, e qual problema resolve..." onChange={e => updateConfig('productDescription', e.target.value)}
+                        style={{ resize: 'vertical', minHeight: 72, fontFamily: 'inherit' }} />
+                </div>
+                <div className="form-group">
+                    <label className="label">Público-alvo</label>
+                    <input className="input" value={config.targetAudience} placeholder="Ex: Mulheres 25-45 que querem emagrecer" onChange={e => updateConfig('targetAudience', e.target.value)} />
+                </div>
+                <div style={{ display: 'flex', gap: 10, marginTop: 20 }}>
+                    <button className="btn btn-ghost" style={{ flex: 1 }} onClick={() => { setShowOnboarding(false); setActiveTab('templates'); }}>Pular</button>
+                    <button className="btn btn-accent" style={{ flex: 2 }} onClick={() => { setShowOnboarding(false); setActiveTab('construtor'); if (!steps.length) addStep('Etapa 1'); }}>
+                        {config.name ? `Criar quiz para "${config.name}"` : 'Começar →'}
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
 
-                                        {/* Font Family */}
-                                        <div className="form-group">
-                                            <label className="label">Fonte</label>
-                                            <select className="input" value={config.fontFamily || 'Inter'} onChange={e => updateConfig('fontFamily', e.target.value)}>
-                                                {['Inter', 'Roboto', 'Poppins', 'Outfit', 'Montserrat', 'Open Sans', 'Lato', 'Nunito'].map(f => (
-                                                    <option key={f} value={f} style={{ fontFamily: f }}>{f}</option>
-                                                ))}
-                                            </select>
-                                        </div>
+    return (
+        <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: 'var(--bg-base)', overflow: 'hidden' }}>
+            {renderTopBar()}
 
-                                        {/* Border Radius */}
-                                        <div className="form-group">
-                                            <label className="label">Bordas</label>
-                                            <div style={{ display: 'flex', gap: 4 }}>
-                                                {[{ v: 'none', l: 'Retas' }, { v: 'small', l: 'Suaves' }, { v: 'medium', l: 'Médias' }, { v: 'large', l: 'Arredondadas' }].map(opt => (
-                                                    <button key={opt.v} onClick={() => updateConfig('borderRadius', opt.v)}
-                                                        style={{
-                                                            flex: 1, padding: '6px 4px', border: '1px solid', fontSize: '0.65rem', fontWeight: 600, cursor: 'pointer',
-                                                            borderRadius: opt.v === 'none' ? 0 : opt.v === 'small' ? 4 : opt.v === 'medium' ? 8 : 14,
-                                                            borderColor: config.borderRadius === opt.v ? 'var(--primary)' : 'var(--border)',
-                                                            background: config.borderRadius === opt.v ? 'rgba(37,99,235,0.06)' : '#fff',
-                                                            color: config.borderRadius === opt.v ? 'var(--primary)' : 'var(--text-muted)',
-                                                        }}>{opt.l}</button>
-                                                ))}
-                                            </div>
-                                        </div>
-                                    </>
-                                )}
+            {/* ═══ CONSTRUTOR TAB ═══ */}
+            {activeTab === 'construtor' && (
+                <div className="qb-shell">
+                    <StepList steps={steps} activeIdx={activeStepIdx} onSelect={selectStep} onRename={renameStep}
+                        onDuplicate={duplicateStep} onDelete={i => (steps.length > 1 ? deleteStep(i) : showToastMsg('Mantenha ao menos 1 etapa'))}
+                        onMove={moveStepTo} onAdd={() => addStep()}
+                        onOpenTemplates={() => { setPaletteOpen(true); setPaletteTab('steps'); }} />
+                    {paletteOpen && (
+                        <BlockPalette tab={paletteTab} setTab={setPaletteTab} onAdd={handlePaletteAdd} onAddStep={addStepFromTemplate}
+                            onDragStartItem={handlePaletteDragStart} onDragEndItem={handlePaletteDragEnd} />
+                    )}
+
+                    <div className="qb-canvas-wrap">
+                        {onCloneStep ? (
+                            <div className="builder-canvas" style={{ padding: 0, display: 'flex', flex: 1 }}>
+                                <CloneEditor
+                                    block={activeStep.blocks[0]}
+                                    onBlockChange={(updatedBlock) => updateBlock(0, updatedBlock)}
+                                    stepName={activeStep.name}
+                                    primaryColor={config.primaryColor}
+                                    onElementSelect={(info) => setCloneSelectedEl(info)}
+                                    lang={cloneLang}
+                                />
                             </div>
+                        ) : (
+                            <EditorCanvas
+                                step={activeStep} steps={steps} stepIndex={activeStepIdx} design={config} T={T} viewMode={viewMode}
+                                selectedId={selectedBlockId}
+                                onSelect={id => { setSelectedBlockId(id); if (!id) setSettingsTab('step'); }}
+                                onEditBlock={(id, patch) => updateBlockById(id, patch)}
+                                onInsert={insertFromPalette}
+                                onMoveBlock={moveBlock}
+                                onDuplicateBlock={duplicateBlockById}
+                                onDeleteBlock={deleteBlockById}
+                                onOpenStepSettings={() => { setSelectedBlockId(null); setSettingsTab('step'); }}
+                                onOpenTemplates={() => { setPaletteOpen(true); setPaletteTab('steps'); }}
+                                draggingPalette={draggingPalette}
+                            />
                         )}
+                        {/* Floating toolbar */}
+                        <div className="qb-toolbar">
+                            <button className="qb-tb-btn" disabled={!hist.canUndo} onClick={hist.undo} title="Desfazer (⌘Z)"><Undo2 size={15} /></button>
+                            <button className="qb-tb-btn" disabled={!hist.canRedo} onClick={hist.redo} title="Refazer (⌘⇧Z)"><Redo2 size={15} /></button>
+                            <div className="qb-tb-sep" />
+                            <button className={`qb-tb-btn ${viewMode === 'mobile' ? 'active' : ''}`} onClick={() => setViewMode('mobile')} title="Celular"><Smartphone size={15} /></button>
+                            <button className={`qb-tb-btn ${viewMode === 'desktop' ? 'active' : ''}`} onClick={() => setViewMode('desktop')} title="Computador"><Monitor size={15} /></button>
+                            <div className="qb-tb-sep" />
+                            <button className={`qb-tb-btn ${paletteOpen ? 'active' : ''}`} onClick={() => setPaletteOpen(o => !o)} title="Mostrar/ocultar blocos"><Grid size={15} /></button>
+                            <button className="qb-tb-btn" disabled={aiStepLoading} onClick={generateAiStep} title="Gerar a próxima etapa com IA">
+                                {aiStepLoading ? <div style={{ width: 14, height: 14, borderRadius: '50%', border: '2px solid #e2e8f0', borderTopColor: 'var(--primary)', animation: 'spin 1s linear infinite' }} /> : <Wand2 size={15} />}
+                                IA
+                            </button>
+                            <button className="qb-tb-btn" onClick={handlePreview} title="Testar o quiz"><PlayCircle size={15} /> Testar</button>
+                            {steps.some(st => st.clone) && <button className="qb-tb-btn" onClick={() => setShowCloneReview(true)} title="Comparar com o original"><ScanSearch size={15} /> Revisar clone</button>}
+                        </div>
                     </div>
+
+                    {onCloneStep && cloneSelectedEl ? (
+                        <div className="builder-right">{renderCloneRightPanel()}</div>
+                    ) : selectedBlock ? (
+                        <Inspector block={selectedBlock} steps={steps} stepIndex={activeStepIdx} config={config} onConfigChange={updateConfig}
+                            onChange={nb => updateBlockById(selectedBlock.id, nb, true)}
+                            onDuplicate={() => duplicateBlockById(selectedBlock.id)}
+                            onDelete={() => deleteBlockById(selectedBlock.id)}
+                            onClose={() => setSelectedBlockId(null)} />
+                    ) : (
+                        <StepSettings tab={settingsTab} setTab={setSettingsTab} step={activeStep} steps={steps} stepIndex={activeStepIdx}
+                            onStepChange={next => updateStep(activeStepIdx, next)} config={config} updateConfig={updateConfig}
+                            onSwitchCloneMode={mode => switchModeAt(activeStepIdx, mode)}
+                            onReclone={config.cloneSource?.path ? () => recloneAt(activeStepIdx) : undefined}
+                            recloning={recloningIdx === activeStepIdx}
+                            onOpenCloneReview={() => setShowCloneReview(true)} />
+                    )}
                 </div>
             )}
 
@@ -1072,9 +992,22 @@ export default function PageBuilder() {
                             <h2 style={{ fontSize: '1.2rem', fontWeight: 700, marginBottom: 4, display: 'flex', alignItems: 'center', gap: 6 }}><Package size={18} /> Templates</h2>
                             <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: 20 }}>Escolha um template para começar rapidamente</p>
 
-
-
-
+                            <div className="label" style={{ marginBottom: 8 }}>✨ Quizzes completos</div>
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 12, marginBottom: 24 }}>
+                                {QUIZ_TEMPLATES.map(t => (
+                                    <div key={t.id} className="card" onClick={() => {
+                                        if (steps.some(st => st.blocks.length) && !confirm(`Substituir as etapas atuais pelo template “${t.name}”? (dá pra desfazer com ⌘Z)`)) return;
+                                        loadTemplate(t);
+                                    }} style={{ padding: 0, cursor: 'pointer', overflow: 'hidden' }}>
+                                        <div style={{ height: 76, background: `linear-gradient(135deg, ${t.color}, ${t.color}aa)`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 34 }}>{t.emoji}</div>
+                                        <div style={{ padding: '12px 14px' }}>
+                                            <div style={{ fontSize: '0.9rem', fontWeight: 700 }}>{t.name}</div>
+                                            <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: 2 }}>{t.desc}</div>
+                                            <div style={{ fontSize: '0.66rem', color: t.color, fontWeight: 600, marginTop: 6 }}>{t.steps().length} etapas</div>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
 
                             {adminTs.length > 0 && (<>
                                 <div className="label" style={{ marginBottom: 8 }}>🔒 Templates globais</div>
@@ -1110,53 +1043,28 @@ export default function PageBuilder() {
 
             {/* ═══ DESIGN TAB ═══ */}
             {activeTab === 'design' && (
-                <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
-                    <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg-base)', overflow: 'auto', padding: 20 }}>
-                        <PhonePreview step={activeStep} selectedBlockId={null} onSelectBlock={() => { }} onDeleteBlock={() => { }} onBlockChange={() => { }} config={config} viewMode={viewMode} onDropBlock={() => { }} onDragOverBlock={() => { }} dragOverBlockIdx={null} onReorderBlock={() => { }} />
-                    </div>
-                    <div style={{ width: 300, background: '#fff', borderLeft: '1px solid var(--border)', overflowY: 'auto', padding: 20 }}>
-                        {[
-                            {
-                                title: 'GERAL', fields: [
-                                    { key: 'alignment', label: 'Alinhamento', type: 'select', options: ['Centralizado', 'Esquerda', 'Direita'] },
-                                    { key: 'mainWidth', label: 'Largura principal', type: 'select', options: ['Pequeno', 'Médio', 'Grande', 'Cheio'] },
-                                    { key: 'elementSize', label: 'Tamanho dos elementos', type: 'select', options: ['Padrão', 'Pequeno', 'Grande'] },
-                                    { key: 'spacing', label: 'Espaçamento', type: 'select', options: ['Pequeno', 'Médio', 'Grande'] },
-                                    { key: 'borderRadius', label: 'Bordas/Cantos', type: 'select', options: ['Nenhum', 'Pequeno', 'Médio', 'Grande'] },
-                                ]
-                            },
-                            {
-                                title: 'HEADER', fields: [
-                                    { key: 'showLogo', label: 'Mostrar logo', type: 'toggle' },
-                                    { key: 'showProgress', label: 'Mostrar progresso', type: 'toggle' },
-                                    { key: 'allowBack', label: 'Permitir voltar', type: 'toggle' },
-                                ]
-                            },
-                            {
-                                title: 'CORES', fields: [
-                                    { key: 'primaryColor', label: 'Cor primária', type: 'color' },
-                                    { key: 'bgColor', label: 'Cor de fundo', type: 'color' },
-                                    { key: 'headerColor', label: 'Cor do header', type: 'color' },
-                                ]
-                            },
-                            {
-                                title: 'TIPOGRAFIA', fields: [
-                                    { key: 'fontFamily', label: 'Fonte', type: 'select', options: ['Inter', 'Roboto', 'Poppins', 'Outfit', 'System'] },
-                                ]
-                            },
-                        ].map(section => (
-                            <div key={section.title} style={{ marginBottom: 20 }}>
-                                <div style={{ fontSize: '0.72rem', fontWeight: 700, letterSpacing: '0.05em', marginBottom: 10 }}>{section.title}</div>
-                                {section.fields.map(f => (
-                                    <div key={f.key} className="form-group">
-                                        {f.type === 'select' && (<><label className="label">{f.label}</label><select className="input" value={config[f.key] || ''} onChange={e => updateConfig(f.key, e.target.value)}>{f.options.map(o => <option key={o} value={o.toLowerCase()}>{o}</option>)}</select></>)}
-                                        {f.type === 'toggle' && (<label className="toggle-wrapper"><label className="toggle"><input type="checkbox" checked={config[f.key] !== false} onChange={e => updateConfig(f.key, e.target.checked)} /><span className="toggle-slider" /></label><span style={{ fontSize: '0.8rem' }}>{f.label}</span></label>)}
-                                        {f.type === 'color' && (<><label className="label">{f.label}</label><div style={{ display: 'flex', gap: 8 }}><input type="color" value={config[f.key] || '#2563eb'} onChange={e => updateConfig(f.key, e.target.value)} style={{ width: 36, height: 32, border: 'none', borderRadius: 6, cursor: 'pointer' }} /><input className="input" value={config[f.key] || ''} onChange={e => updateConfig(f.key, e.target.value)} placeholder="#hex" /></div></>)}
-                                    </div>
-                                ))}
+                <div className="qb-shell">
+                    <div className="qb-canvas" style={{ paddingBottom: 40 }}>
+                        <div className={`qb-device ${viewMode}`}>
+                            <div className="qb-device-bar">{viewMode === 'mobile' ? <div className="qb-notch" /> : null}</div>
+                            <div className="qb-device-scroll">
+                                <QuizFrame T={T} design={config} step={activeStep} index={activeStepIdx} total={steps.length} canBack={activeStepIdx > 0} onBack={() => { }} minHeight={viewMode === 'mobile' ? 714 : 586}>
+                                    {activeStep && !onCloneStep ? <StepView step={activeStep} T={T} design={config} mode="edit" steps={steps} />
+                                        : <div className="qb-empty"><div className="qb-empty-sub">{onCloneStep ? 'Páginas clonadas mantêm o visual original.' : 'Crie uma etapa para ver o design.'}</div></div>}
+                                </QuizFrame>
                             </div>
-                        ))}
+                        </div>
+                        <div className="qb-toolbar" style={{ position: 'fixed' }}>
+                            <button className="qb-tb-btn" disabled={activeStepIdx === 0} onClick={() => selectStep(activeStepIdx - 1)}>‹</button>
+                            <span className="qb-save" style={{ color: '#4b5563' }}>Etapa {activeStepIdx + 1} de {steps.length}</span>
+                            <button className="qb-tb-btn" disabled={activeStepIdx >= steps.length - 1} onClick={() => selectStep(activeStepIdx + 1)}>›</button>
+                            <div className="qb-tb-sep" />
+                            <button className={`qb-tb-btn ${viewMode === 'mobile' ? 'active' : ''}`} onClick={() => setViewMode('mobile')}><Smartphone size={15} /></button>
+                            <button className={`qb-tb-btn ${viewMode === 'desktop' ? 'active' : ''}`} onClick={() => setViewMode('desktop')}><Monitor size={15} /></button>
+                        </div>
                     </div>
+                    <StepSettings tab="design" setTab={() => { }} step={activeStep} steps={steps} stepIndex={activeStepIdx}
+                        onStepChange={next => updateStep(activeStepIdx, next)} config={config} updateConfig={updateConfig} />
                 </div>
             )}
 
@@ -1800,18 +1708,9 @@ export default function PageBuilder() {
                                 {/* Pre-built steps */}
                                 <div className="label" style={{ marginBottom: 8 }}>🧩 Blocos Prontos</div>
                                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, marginBottom: 20 }}>
-                                    {READY_STEPS.map(rs => (
-                                        <div key={rs.id} onClick={() => {
-                                            const ns = makeStep(rs.name);
-                                            ns.blocks = JSON.parse(JSON.stringify(rs.blocks));
-                                            setSteps(s => [...s, ns]);
-                                            setActiveStepIdx(steps.length);
-                                            setSelectedBlockIdx(null);
-                                            setShowTemplates(false);
-                                            showToastMsg(`${rs.name} adicionado!`);
-                                        }} style={{ padding: 12, background: '#fff', border: '1px solid var(--border)', borderRadius: 10, cursor: 'pointer', textAlign: 'center', transition: 'var(--transition)' }}
-                                            onMouseOver={e => e.currentTarget.style.borderColor = rs.color}
-                                            onMouseOut={e => e.currentTarget.style.borderColor = 'var(--border)'}>
+                                    {STEP_TEMPLATES.map(rs => (
+                                        <div key={rs.key} onClick={() => { addStepFromTemplate(rs.key); setShowTemplates(false); }}
+                                            style={{ padding: 12, background: '#fff', border: '1px solid var(--border)', borderRadius: 10, cursor: 'pointer', textAlign: 'center' }}>
                                             <div style={{ fontSize: 24, marginBottom: 4 }}>{rs.icon}</div>
                                             <div style={{ fontSize: '0.78rem', fontWeight: 600, color: '#2d3748' }}>{rs.name}</div>
                                             <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', marginTop: 2 }}>{rs.desc}</div>
@@ -2009,9 +1908,28 @@ export default function PageBuilder() {
                                         </div>
                                     </div>
 
+                                    {/* Clone options */}
+                                    <div style={{ marginBottom: 14 }}>
+                                        <label className="label">O que o clone deve fazer</label>
+                                        {[
+                                            { k: 'native', l: 'Converter em blocos editáveis', d: 'Cada página vira blocos do construtor (textos, opções, campos, vídeo, áudio…). A versão HTML fiel fica guardada.' },
+                                            { k: 'dynamic', l: 'Detectar conteúdo que muda com as respostas', d: 'Roda o quiz mais 2 vezes e transforma números, datas, nomes e gráficos em variáveis e fórmulas.' },
+                                            { k: 'branches', l: 'Descobrir caminhos alternativos', d: 'Testa as outras opções de cada pergunta e clona os caminhos diferentes. Mais lento (alguns minutos a mais).' },
+                                            { k: 'ai', l: 'Revisar a estrutura com IA', d: 'A IA organiza depoimentos, FAQ, ofertas e listas — sem inventar texto.' },
+                                        ].map(o => (
+                                            <label key={o.k} style={{ display: 'flex', gap: 8, alignItems: 'flex-start', padding: '7px 2px', cursor: 'pointer' }}>
+                                                <input type="checkbox" checked={!!cloneOpts[o.k]} onChange={e => setCloneOpts(c => ({ ...c, [o.k]: e.target.checked }))} style={{ marginTop: 3, accentColor: 'var(--primary)' }} />
+                                                <span>
+                                                    <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-primary)' }}>{o.l}</span>
+                                                    <span style={{ display: 'block', fontSize: '0.68rem', color: 'var(--text-muted)', lineHeight: 1.45 }}>{o.d}</span>
+                                                </span>
+                                            </label>
+                                        ))}
+                                    </div>
+
                                     {/* How it works + Warnings */}
                                     <div style={{ padding: '10px 12px', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 8, marginBottom: 10, fontSize: '0.7rem', color: '#166534' }}>
-                                        <Lightbulb size={14} style={{ display: 'inline', marginRight: 4 }} /> <strong>Como funciona:</strong> Nosso bot vai acessar a URL, navegar pelo quiz inteiro clicando nas opções, e clonar todas as etapas automaticamente.
+                                        <Lightbulb size={14} style={{ display: 'inline', marginRight: 4 }} /> <strong>Como funciona:</strong> o robô navega pelo quiz, identifica o papel de cada botão (continuar, voltar, opção, link, WhatsApp), copia vídeos, áudios e animações e monta as etapas. No fim você revisa lado a lado com o original.
                                     </div>
 
                                     <div style={{ padding: '10px 12px', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 8, marginBottom: 14, fontSize: '0.68rem', color: '#92400e', lineHeight: 1.6 }}>
@@ -2020,7 +1938,7 @@ export default function PageBuilder() {
                                             <li>O clone pode conter <strong>pequenos erros visuais</strong> — revise cada etapa cuidadosamente</li>
                                             <li><strong>Etapas animadas</strong> (loading, sliders complexos) podem não funcionar corretamente — substitua pelos componentes nativos do construtor</li>
                                             {cloneLang !== 'original' && <li><strong>Apenas textos são traduzidos</strong> — imagens com texto embutido precisam ser alteradas manualmente</li>}
-                                            <li>Botões e links clonados precisam ser <strong>reconfigurados manualmente</strong></li>
+                                            <li>Páginas com login, captcha ou pagamento real podem travar o robô</li>
                                         </ul>
                                     </div>
 
@@ -2063,18 +1981,17 @@ export default function PageBuilder() {
                                                         } else {
                                                             setCloneLog(prev => [...prev, { key: `stage-${stage}-${Date.now()}`, icon: stage === 'connecting' ? '🌐' : stage === 'building' ? '🧱' : stage === 'complete' ? '✅' : '🔍', msg }]);
                                                         }
-                                                    }, cloneLang);
+                                                    }, cloneLang, cloneOpts);
                                                     if (quiz && quiz.pages?.length > 0) {
-                                                        const ns = quiz.pages.map((p, i) => {
-                                                            if (p.type === 'compound' && p.blocks) return { id: `stp_url_${Date.now()}_${i}`, name: `Etapa ${i + 1}`, blocks: p.blocks };
-                                                            return {
-                                                                id: `stp_url_${Date.now()}_${i}`,
-                                                                name: (p.text || p.headline || '').replace(/\n/g, ' ').slice(0, 25) || `Etapa ${i + 1}`,
-                                                                blocks: [p]
-                                                            };
-                                                        });
-                                                        setSteps(ns); setActiveStepIdx(0); setSelectedBlockIdx(null);
-                                                        setConfig(c => ({ ...c, name: quiz.name || 'Quiz Clonado', primaryColor: quiz.primaryColor || c.primaryColor, niche: quiz.niche || c.niche, welcomeHeadline: quiz.welcome?.headline || '', welcomeSub: quiz.welcome?.subheadline || '', welcomeCta: quiz.welcome?.cta || 'Começar →' }));
+                                                        const ns = stepsFromClone(quiz);
+                                                        const cloneDesign = Object.fromEntries(Object.entries(designFromClone(quiz)).filter(([, v]) => v !== undefined));
+                                                        setDoc(d => ({
+                                                            steps: ns,
+                                                            config: { ...d.config, name: d.config.name || quiz.name || 'Quiz Clonado', niche: quiz.niche || d.config.niche, welcomeHeadline: quiz.welcome?.headline || '', welcomeSub: quiz.welcome?.subheadline || '', welcomeCta: quiz.welcome?.cta || 'Começar →', ...cloneDesign, cloneSource: quiz.sourceUrl ? { url: quiz.sourceUrl, path: quiz.graph?.path || null } : null },
+                                                        }), { checkpoint: true });
+                                                        setActiveStepIdx(0); setSelectedBlockId(null);
+                                                        setCloneGraphPartial(!!quiz.graph?.partial);
+                                                        setShowCloneReview(true);
                                                         if (quiz.results?.length) setClonedResults(quiz.results);
                                                         if (quiz.clonedCSS) setClonedCSS(quiz.clonedCSS);
                                                         setIsClone(true);
@@ -2116,6 +2033,13 @@ export default function PageBuilder() {
                 )
             }
 
+            {showCloneReview && (
+                <CloneReview steps={steps} T={T} config={config} graphPartial={cloneGraphPartial}
+                    onClose={() => setShowCloneReview(false)}
+                    onSwitchMode={switchModeAt} onSwitchAll={switchAllModes}
+                    onGoToStep={i => { setShowCloneReview(false); setActiveTab('construtor'); selectStep(i); }}
+                    onReclone={recloneAt} recloningIdx={recloningIdx} canReclone={!!config.cloneSource?.path} />
+            )}
             {renderToast()}
         </div >
     );

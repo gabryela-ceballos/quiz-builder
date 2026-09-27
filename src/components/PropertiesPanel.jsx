@@ -17,8 +17,10 @@ const S = {
     chip: (a, c) => ({ padding: '5px 8px', borderRadius: 6, border: `1px solid ${a ? (c || 'var(--primary)') : 'var(--border)'}`, background: a ? `${c || 'var(--primary)'}0a` : '#f9fafb', cursor: 'pointer', textAlign: 'center', fontSize: '0.7rem', color: a ? (c || 'var(--primary)') : 'var(--text-muted)', transition: 'all 0.15s', flex: 1 }),
 };
 
-export default function PropertiesPanel({ block, onChange, config, onConfigChange, steps = [] }) {
-    const [tab, setTab] = useState('component');
+export default function PropertiesPanel({ block, onChange, config, onConfigChange, steps = [], mode }) {
+    // `mode` ('component' | 'style') embeds a single tab inside the v2 inspector (no tabs, no width picker)
+    const [tabState, setTab] = useState('component');
+    const tab = mode || tabState;
     if (!block) return <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)' }}><MousePointer size={28} style={{ marginBottom: 8, opacity: 0.3 }} /><p style={{ fontSize: '0.8rem' }}>Selecione um bloco</p></div>;
 
     const td = BLOCK_TYPES.find(t => t.type === block.type) || {};
@@ -34,14 +36,14 @@ export default function PropertiesPanel({ block, onChange, config, onConfigChang
 
     return (
         <div>
-            <div style={{ display: 'flex', borderBottom: '1px solid var(--border)', marginBottom: 12 }}>
+            {!mode && <div style={{ display: 'flex', borderBottom: '1px solid var(--border)', marginBottom: 12 }}>
                 <div style={S.tab(tab === 'component')} onClick={() => setTab('component')}>Componente</div>
                 <div style={S.tab(tab === 'style')} onClick={() => setTab('style')}>Estilo</div>
-            </div>
-            <div style={{ padding: '0 12px 12px', overflowY: 'auto', maxHeight: 'calc(100vh - 160px)' }}>
+            </div>}
+            <div style={mode ? {} : { padding: '0 12px 12px', overflowY: 'auto', maxHeight: 'calc(100vh - 160px)' }}>
                 {tab === 'component' && (<>
                     {/* Badge + Width selector */}
-                    <div style={{ ...S.section, marginBottom: 12 }}>
+                    {!mode && <div style={{ ...S.section, marginBottom: 12 }}>
                         <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 10 }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 10px', borderRadius: 8, background: `${td.color}0a`, border: `1px solid ${td.color}22`, flex: 1 }}><span style={{ fontSize: 14 }}>{td.icon}</span><span style={{ fontSize: '0.78rem', fontWeight: 600, color: td.color }}>{td.label}</span></div>
                         </div>
@@ -65,7 +67,7 @@ export default function PropertiesPanel({ block, onChange, config, onConfigChang
                                 );
                             })}
                         </div>
-                    </div>
+                    </div>}
 
                     {/* CHOICE: layout + multi + question + options */}
                     {['choice', 'single-choice'].includes(block.type) && (<>
