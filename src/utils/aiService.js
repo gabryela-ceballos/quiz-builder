@@ -5,47 +5,23 @@
 // Step 4: generateResults    → results[]
 // Step 5: generateQuizImages → images (DALL-E)
 
-const OPENAI_URL = 'https://api.openai.com/v1/chat/completions';
-const DALLE_URL = 'https://api.openai.com/v1/images/generations';
-const API_KEY = import.meta.env.VITE_OPENAI_API_KEY || '';
+const API_BASE = import.meta.env.DEV ? 'http://localhost:3001' : '';
 
-// ── Shared AI caller ──
+function authHeaders() {
+  const token = localStorage.getItem('inlead_token');
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+// ── Shared AI caller (proxied through our server so the OpenAI key never reaches the browser) ──
 async function callAI(prompt, { system = '', temperature = 0.7, maxTokens = 2000 } = {}) {
-  if (!API_KEY) throw new Error('VITE_OPENAI_API_KEY não configurada no .env');
-
-  const messages = [];
-  if (system) messages.push({ role: 'system', content: system });
-  messages.push({ role: 'user', content: prompt });
-
-  const res = await fetch(OPENAI_URL, {
+  const res = await fetch(`${API_BASE}/api/ai/chat`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${API_KEY}`,
-    },
-    body: JSON.stringify({
-      model: 'gpt-4o-mini',
-      messages,
-      temperature,
-      max_tokens: maxTokens,
-    }),
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ prompt, system, temperature, maxTokens }),
   });
-
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.error?.message || `OpenAI API error: ${res.status}`);
-  }
-
-  const data = await res.json();
-  const content = data.choices?.[0]?.message?.content || '';
-  const cleaned = content.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-
-  try {
-    return JSON.parse(cleaned);
-  } catch (e) {
-    console.error('[callAI] Failed to parse response:', cleaned);
-    throw new Error('A IA retornou um formato inválido.');
-  }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `AI error: ${res.status}`);
+  return data;
 }
 
 // ════════════════════════════════════════════════════════
@@ -279,29 +255,18 @@ REGRAS TÉCNICAS:
 // DALL-E IMAGE CALLER
 // ════════════════════════════════════════════════════════
 async function callDALLE(prompt, size = '1024x1024') {
-  if (!API_KEY) return null;
   try {
-    const res = await fetch(DALLE_URL, {
+    const res = await fetch(`${API_BASE}/api/ai/image`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${API_KEY}`,
-      },
-      body: JSON.stringify({
-        model: 'dall-e-3',
-        prompt,
-        n: 1,
-        size,
-        quality: 'standard',
-      }),
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify({ prompt, size }),
     });
+    const data = await res.json().catch(() => ({}));
     if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      console.warn('[DALL-E] Error:', err.error?.message || res.status);
+      console.warn('[DALL-E] Error:', data.error || res.status);
       return null;
     }
-    const data = await res.json();
-    return data.data?.[0]?.url || null;
+    return data.url || null;
   } catch (err) {
     console.warn('[DALL-E] Failed:', err.message);
     return null;

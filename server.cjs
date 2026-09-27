@@ -992,6 +992,72 @@ async function callOpenAI(prompt, { system = '', temperature = 0.7, maxTokens = 
     catch (e) { console.error('[AI] Parse error:', cleaned.slice(0, 500)); throw new Error('AI retornou formato inválido'); }
 }
 
+// ── AI proxy for the logged-in frontend (keeps the OpenAI key server-side) ──
+app.post('/api/ai/chat', requireAuth, async (req, res) => {
+    if (!OPENAI_KEY) return res.status(400).json({ error: 'OPENAI_API_KEY não configurada' });
+    const { prompt, system = '', temperature = 0.7, maxTokens = 2000 } = req.body || {};
+    if (!prompt) return res.status(400).json({ error: 'prompt required' });
+    try {
+        res.json(await callOpenAI(prompt, { system, temperature, maxTokens: Math.min(Number(maxTokens) || 2000, 5000) }));
+    } catch (err) {
+        res.status(502).json({ error: err.message });
+    }
+});
+
+app.post('/api/ai/image', requireAuth, async (req, res) => {
+    if (!OPENAI_KEY) return res.status(400).json({ error: 'OPENAI_API_KEY não configurada' });
+    const { prompt, size = '1024x1024' } = req.body || {};
+    if (!prompt) return res.status(400).json({ error: 'prompt required' });
+    try {
+        const r = await fetch('https://api.openai.com/v1/images/generations', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${OPENAI_KEY}` },
+            body: JSON.stringify({ model: 'dall-e-3', prompt, n: 1, size, quality: 'standard' }),
+        });
+        const data = await r.json();
+        if (!r.ok) return res.status(502).json({ error: data.error?.message || `OpenAI error ${r.status}` });
+        res.json({ url: data.data?.[0]?.url || null });
+    } catch (err) {
+        res.status(502).json({ error: err.message });
+    }
+});
+
+// Public: persuasive diagnosis for the quiz result block (prompt built here, not an open proxy)
+app.post('/api/ai/diagnosis', async (req, res) => {
+    if (!OPENAI_KEY) return res.status(400).json({ error: 'OPENAI_API_KEY não configurada' });
+    const { answers = [], productContext = '', productName = '' } = req.body || {};
+    const qa = (Array.isArray(answers) ? answers : []).slice(0, 40)
+        .map(a => ({ question: String(a.question || '').slice(0, 300), answer: String(a.answer || '').slice(0, 300) }))
+        .filter(a => a.question);
+    if (!qa.length) return res.status(400).json({ error: 'answers required' });
+    const prompt = `Você é um copywriter especialista em conversão. Analise as respostas do quiz e gere um diagnóstico CURTO e PERSUASIVO que faça a pessoa querer clicar no botão de compra.
+
+RESPOSTAS DO QUIZ:
+${qa.map((q, i) => `${i + 1}. ${q.question}\n   → ${q.answer}`).join('\n')}
+
+${productContext ? `CONTEXTO DO PRODUTO: ${String(productContext).slice(0, 1000)}` : ''}
+${productName ? `PRODUTO OFERECIDO: ${String(productName).slice(0, 200)}` : ''}
+
+REGRAS:
+1. Seja BREVE — máximo 3 frases no body
+2. Primeira frase: diagnóstico direto baseado nas respostas
+3. Segunda frase: consequência de não agir (urgência)
+4. Terceira frase: ponte para a solução (sem revelar demais)
+5. Tom empático mas urgente
+6. NUNCA diga que está tudo bem
+
+Retorne JSON:
+{
+  "headline": "Frase impactante de 1 linha (máx 10 palavras)",
+  "body": "3 frases curtas e diretas. Diagnóstico + urgência + solução."
+}`;
+    try {
+        res.json(await callOpenAI(prompt, { temperature: 0.8, maxTokens: 400 }));
+    } catch (err) {
+        res.status(502).json({ error: err.message });
+    }
+});
+
 // ── Translate texts batch ──
 app.post('/api/translate', async (req, res) => {
     if (!OPENAI_KEY) return res.status(400).json({ error: 'VITE_OPENAI_API_KEY não configurada' });

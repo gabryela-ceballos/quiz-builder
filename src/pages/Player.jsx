@@ -755,8 +755,7 @@ function AIResultBlock({ page, quiz, answers, pages, T }) {
       }
     });
 
-    const apiKey = import.meta.env.VITE_OPENAI_API_KEY;
-    if (!apiKey || answeredQuestions.length === 0) {
+    if (answeredQuestions.length === 0) {
       setDiagnosis({
         headline: 'Identificamos um padrão importante nas suas respostas',
         body: 'Com base no que você respondeu, seu perfil indica oportunidades reais de melhoria. A boa notícia? Existe um método comprovado que já ajudou milhares de pessoas na mesma situação.',
@@ -766,44 +765,14 @@ function AIResultBlock({ page, quiz, answers, pages, T }) {
     }
 
     try {
-      const prompt = `Você é um copywriter especialista em conversão. Analise as respostas do quiz e gere um diagnóstico CURTO e PERSUASIVO que faça a pessoa querer clicar no botão de compra.
-
-RESPOSTAS DO QUIZ:
-${answeredQuestions.map((q, i) => `${i + 1}. ${q.question}\n   → ${q.answer}`).join('\n')}
-
-${page.productContext ? `CONTEXTO DO PRODUTO: ${page.productContext}` : ''}
-${page.productName ? `PRODUTO OFERECIDO: ${page.productName}` : ''}
-
-REGRAS:
-1. Seja BREVE — máximo 3 frases no body
-2. Primeira frase: diagnóstico direto baseado nas respostas
-3. Segunda frase: consequência de não agir (urgência)
-4. Terceira frase: ponte para a solução (sem revelar demais)
-5. Tom empático mas urgente
-6. NUNCA diga que está tudo bem
-
-Retorne JSON:
-{
-  "headline": "Frase impactante de 1 linha (máx 10 palavras)",
-  "body": "3 frases curtas e diretas. Diagnóstico + urgência + solução."
-}
-
-Retorne APENAS o JSON, sem markdown.`;
-
-      const res = await fetch('https://api.openai.com/v1/chat/completions', {
+      const API_BASE = import.meta.env.DEV ? 'http://localhost:3001' : '';
+      const res = await fetch(`${API_BASE}/api/ai/diagnosis`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-        body: JSON.stringify({
-          model: 'gpt-4o-mini',
-          messages: [{ role: 'user', content: prompt }],
-          temperature: 0.8,
-          max_tokens: 400,
-        }),
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ answers: answeredQuestions, productContext: page.productContext || '', productName: page.productName || '' }),
       });
-
-      const data = await res.json();
-      const content = data.choices?.[0]?.message?.content || '';
-      const json = JSON.parse(content.replace(/```json?\n?|\n?```/g, '').trim());
+      const json = await res.json();
+      if (!res.ok || !json.headline) throw new Error(json.error || 'diagnosis failed');
       setDiagnosis(json);
     } catch (err) {
       console.error('AI diagnosis error:', err);
