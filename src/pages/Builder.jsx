@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Sparkles, Loader2, Check, Copy, Eye, Search, Zap, Link, PenTool, AlertTriangle } from 'lucide-react';
+import { ArrowLeft, Sparkles, Loader2, Check, Copy, Eye, Search, Zap, Link, PenTool, AlertTriangle, Trash2, ArrowUp, ArrowDown, Image as ImageIcon, X, Plus } from 'lucide-react';
 import DomainSettings from '../components/DomainSettings';
 import { generateQuiz, NICHES } from '../utils/quizGenerator';
 import { saveQuiz, getQuiz } from '../hooks/useQuizStore';
@@ -38,6 +38,51 @@ export default function Builder() {
   const [cloneUrl, setCloneUrl] = useState('');
   const [cloning, setCloning] = useState(false);
   const [clonePhase, setClonePhase] = useState('');
+  // Clone review state — preview-before-save UI
+  const [screenshotModalIdx, setScreenshotModalIdx] = useState(null);
+
+  // Helpers for editing the cloned quiz before publishing
+  const updatePageField = (idx, field, value) => {
+    setQuiz(q => {
+      if (!q) return q;
+      const pages = [...(q.pages || [])];
+      pages[idx] = { ...pages[idx], [field]: value };
+      return { ...q, pages };
+    });
+  };
+  const updateOptionField = (pageIdx, optIdx, field, value) => {
+    setQuiz(q => {
+      if (!q) return q;
+      const pages = [...(q.pages || [])];
+      const opts = [...(pages[pageIdx].options || [])];
+      opts[optIdx] = { ...opts[optIdx], [field]: value };
+      pages[pageIdx] = { ...pages[pageIdx], options: opts };
+      return { ...q, pages };
+    });
+  };
+  const removePage = (idx) => {
+    setQuiz(q => {
+      if (!q) return q;
+      const pages = (q.pages || []).filter((_, i) => i !== idx);
+      return { ...q, pages };
+    });
+  };
+  const movePage = (idx, direction) => {
+    setQuiz(q => {
+      if (!q) return q;
+      const pages = [...(q.pages || [])];
+      const target = idx + direction;
+      if (target < 0 || target >= pages.length) return q;
+      [pages[idx], pages[target]] = [pages[target], pages[idx]];
+      return { ...q, pages };
+    });
+  };
+  const updateWelcomeField = (field, value) => {
+    setQuiz(q => {
+      if (!q) return q;
+      return { ...q, welcome: { ...(q.welcome || {}), [field]: value } };
+    });
+  };
 
   // Redirect to home if no valid mode (only on mount)
   useEffect(() => { if (!validMode) navigate('/dashboard'); }, []);
@@ -351,67 +396,207 @@ export default function Builder() {
               </div>
             )}
 
-            {/* ── Step 1 (Clone): Review flagged pages ── */}
+            {/* ── Step 1 (Clone): Review pages before publishing ── */}
             {step === 1 && quiz && creationMode === 'clone' && (
               <div className="animate-in">
-                <div style={{ textAlign: 'center', marginBottom: 28 }}>
+                <div style={{ textAlign: 'center', marginBottom: 24 }}>
                   <div style={{ fontSize: '3rem', marginBottom: 10 }}>📋</div>
-                  <h2 style={{ marginBottom: 6 }}>Revise as páginas do seu quiz</h2>
+                  <h2 style={{ marginBottom: 6 }}>Revise antes de publicar</h2>
                   {(() => {
+                    const total = (quiz.pages || []).length;
                     const warningCount = (quiz.pages || []).filter(p => (p.warnings || []).length > 0).length;
-                    return warningCount > 0
-                      ? <p style={{ color: '#d97706' }}><AlertTriangle size={14} style={{ display: 'inline', verticalAlign: -2 }} /> {warningCount} página{warningCount > 1 ? 's' : ''} precisa{warningCount > 1 ? 'm' : ''} de atenção</p>
-                      : <p style={{ color: 'var(--success)' }}>✅ Todas as páginas estão OK!</p>;
+                    return (
+                      <p style={{ color: 'var(--text-secondary)', fontSize: '0.92rem' }}>
+                        {total} página{total !== 1 ? 's' : ''} clonada{total !== 1 ? 's' : ''}
+                        {warningCount > 0 && (
+                          <> · <span style={{ color: '#d97706' }}><AlertTriangle size={13} style={{ display: 'inline', verticalAlign: -2 }} /> {warningCount} precisa{warningCount > 1 ? 'm' : ''} de atenção</span></>
+                        )}
+                      </p>
+                    );
                   })()}
                 </div>
 
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxHeight: 500, overflowY: 'auto', marginBottom: 24, paddingRight: 4 }}>
+                {/* ── Welcome card (editable) ── */}
+                {quiz.welcome && (
+                  <div style={{
+                    padding: 16, borderRadius: 12, marginBottom: 16,
+                    background: 'linear-gradient(135deg, rgba(99,102,241,0.06), rgba(99,102,241,0.02))',
+                    border: '1.5px solid rgba(99,102,241,0.25)',
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, fontSize: '0.75rem', fontWeight: 600, color: 'var(--primary)', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                      <span style={{ fontSize: '1rem' }}>👋</span> Tela de boas-vindas
+                    </div>
+                    <input
+                      type="text"
+                      value={quiz.welcome.headline || ''}
+                      onChange={e => updateWelcomeField('headline', e.target.value)}
+                      placeholder="Título principal..."
+                      style={{ width: '100%', fontSize: '1.05rem', fontWeight: 600, border: 'none', background: 'transparent', padding: '4px 0', outline: 'none', marginBottom: 6 }}
+                    />
+                    <input
+                      type="text"
+                      value={quiz.welcome.subheadline || ''}
+                      onChange={e => updateWelcomeField('subheadline', e.target.value)}
+                      placeholder="Subtítulo (opcional)..."
+                      style={{ width: '100%', fontSize: '0.9rem', color: 'var(--text-secondary)', border: 'none', background: 'transparent', padding: '4px 0', outline: 'none', marginBottom: 6 }}
+                    />
+                    <input
+                      type="text"
+                      value={quiz.welcome.cta || ''}
+                      onChange={e => updateWelcomeField('cta', e.target.value)}
+                      placeholder="Texto do botão..."
+                      style={{ width: '100%', fontSize: '0.85rem', color: 'var(--primary)', fontWeight: 600, border: 'none', background: 'transparent', padding: '4px 0', outline: 'none' }}
+                    />
+                  </div>
+                )}
+
+                {/* ── Pages grid ── */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 12, maxHeight: 560, overflowY: 'auto', marginBottom: 24, paddingRight: 4 }}>
+                  {(quiz.pages || []).length === 0 && (
+                    <div style={{ padding: 32, textAlign: 'center', color: 'var(--text-secondary)', border: '1.5px dashed var(--border)', borderRadius: 12 }}>
+                      Nenhuma página. Volte e clone de novo.
+                    </div>
+                  )}
                   {(quiz.pages || []).map((p, i) => {
                     const hasWarnings = (p.warnings || []).length > 0;
-                    const typeIcons = { choice: '📝', 'multi-select': '☑️', insight: '💡', input: '🎚️', loading: '⏳', statement: '💬', result: '🏆', welcome: '👋', lead: '📧' };
+                    const typeIcons = { choice: '📝', 'multi-select': '☑️', insight: '💡', input: '🎚️', loading: '⏳', statement: '💬', result: '🏆', welcome: '👋', lead: '📧', 'html-script': '🧩' };
+                    const hasScreenshot = !!p.screenshot;
                     return (
-                      <div key={i} style={{
-                        padding: '14px 18px', borderRadius: 12,
-                        background: hasWarnings ? 'rgba(217,119,6,0.04)' : '#f9fafb',
+                      <div key={p.id || i} style={{
+                        padding: 14, borderRadius: 12,
+                        background: hasWarnings ? 'rgba(217,119,6,0.04)' : '#fafafa',
                         border: hasWarnings ? '1.5px solid rgba(217,119,6,0.35)' : '1px solid var(--border)',
-                        transition: 'var(--transition)',
+                        display: 'flex', gap: 14,
                       }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: hasWarnings ? 8 : 0 }}>
-                          <div style={{
-                            width: 28, height: 28, borderRadius: '50%',
-                            background: hasWarnings ? '#d97706' : 'var(--primary)',
+                        {/* Screenshot thumb (clickable) */}
+                        <button
+                          onClick={() => hasScreenshot && setScreenshotModalIdx(i)}
+                          disabled={!hasScreenshot}
+                          title={hasScreenshot ? 'Ver screenshot original' : 'Sem screenshot disponível'}
+                          style={{
+                            width: 100, height: 130, flexShrink: 0,
+                            borderRadius: 8, overflow: 'hidden',
+                            border: '1px solid var(--border)',
+                            background: hasScreenshot ? '#fff' : '#f3f4f6',
+                            cursor: hasScreenshot ? 'zoom-in' : 'default',
+                            padding: 0,
                             display: 'flex', alignItems: 'center', justifyContent: 'center',
-                            fontSize: '0.7rem', fontWeight: 700, color: '#fff', flexShrink: 0,
-                          }}>{i + 1}</div>
-                          <span style={{ fontSize: '1.1rem', flexShrink: 0 }}>{typeIcons[p.clonePageType] || '📄'}</span>
-                          <span style={{
-                            flex: 1, fontSize: '0.85rem', color: 'var(--text-secondary)',
-                            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                          }}>{p.text || p.title || '(sem texto)'}</span>
-                          <span className="badge" style={{ fontSize: '0.65rem', background: '#f3f4f6', flexShrink: 0 }}>{p.clonePageType}</span>
+                          }}
+                        >
+                          {hasScreenshot ? (
+                            <img
+                              src={`data:image/jpeg;base64,${p.screenshot}`}
+                              alt={`Página ${i + 1}`}
+                              style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'top' }}
+                            />
+                          ) : (
+                            <ImageIcon size={28} color="#9ca3af" />
+                          )}
+                        </button>
+
+                        {/* Content + edit */}
+                        <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <div style={{
+                              width: 24, height: 24, borderRadius: '50%',
+                              background: hasWarnings ? '#d97706' : 'var(--primary)',
+                              display: 'flex', alignItems: 'center', justifyContent: 'center',
+                              fontSize: '0.65rem', fontWeight: 700, color: '#fff', flexShrink: 0,
+                            }}>{i + 1}</div>
+                            <span style={{ fontSize: '1rem', flexShrink: 0 }}>{typeIcons[p.clonePageType] || typeIcons[p.type] || '📄'}</span>
+                            <span className="badge" style={{ fontSize: '0.65rem', background: '#f3f4f6', flexShrink: 0 }}>{p.clonePageType || p.type}</span>
+                            {hasWarnings && (
+                              <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                                {p.warnings.map((w, wi) => (
+                                  <span key={wi} title={w.desc} style={{
+                                    padding: '2px 8px', borderRadius: 6,
+                                    background: 'rgba(217,119,6,0.12)', color: '#92400e',
+                                    fontSize: '0.7rem', fontWeight: 500, cursor: 'help',
+                                  }}>
+                                    {w.icon} {w.label}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+
+                          <input
+                            type="text"
+                            value={p.text || p.title || ''}
+                            onChange={e => updatePageField(i, 'text', e.target.value)}
+                            placeholder="Título da página..."
+                            style={{ width: '100%', fontSize: '0.95rem', fontWeight: 600, border: 'none', background: 'transparent', padding: '2px 0', outline: 'none', color: 'var(--text)' }}
+                          />
+                          {(p.subtitle !== undefined || p.subtitle === '') && (
+                            <input
+                              type="text"
+                              value={p.subtitle || ''}
+                              onChange={e => updatePageField(i, 'subtitle', e.target.value)}
+                              placeholder="Subtítulo (opcional)..."
+                              style={{ width: '100%', fontSize: '0.82rem', color: 'var(--text-secondary)', border: 'none', background: 'transparent', padding: '2px 0', outline: 'none' }}
+                            />
+                          )}
+
+                          {/* Options editor (only for choice-like types) */}
+                          {Array.isArray(p.options) && p.options.length > 0 && (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 4 }}>
+                              {p.options.map((opt, oi) => (
+                                <div key={oi} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 8px', background: '#fff', border: '1px solid var(--border)', borderRadius: 6 }}>
+                                  <input
+                                    type="text"
+                                    value={opt.emoji || ''}
+                                    onChange={e => updateOptionField(i, oi, 'emoji', e.target.value)}
+                                    maxLength={4}
+                                    placeholder="—"
+                                    style={{ width: 28, fontSize: '0.95rem', textAlign: 'center', border: 'none', background: 'transparent', outline: 'none' }}
+                                  />
+                                  <input
+                                    type="text"
+                                    value={opt.text || ''}
+                                    onChange={e => updateOptionField(i, oi, 'text', e.target.value)}
+                                    placeholder={`Opção ${oi + 1}`}
+                                    style={{ flex: 1, fontSize: '0.85rem', border: 'none', background: 'transparent', outline: 'none' }}
+                                  />
+                                </div>
+                              ))}
+                            </div>
+                          )}
                         </div>
 
-                        {hasWarnings && (
-                          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginLeft: 38 }}>
-                            {p.warnings.map((w, wi) => (
-                              <div key={wi} title={w.desc} style={{
-                                display: 'flex', alignItems: 'center', gap: 4,
-                                padding: '3px 10px', borderRadius: 6,
-                                background: 'rgba(217,119,6,0.1)', color: '#92400e',
-                                fontSize: '0.75rem', fontWeight: 500, cursor: 'help',
-                              }}>
-                                <span>{w.icon}</span> {w.label}
-                              </div>
-                            ))}
-                          </div>
-                        )}
+                        {/* Action buttons */}
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, flexShrink: 0 }}>
+                          <button
+                            className="btn btn-ghost"
+                            onClick={() => movePage(i, -1)}
+                            disabled={i === 0}
+                            title="Mover pra cima"
+                            style={{ padding: 6, opacity: i === 0 ? 0.3 : 1 }}
+                          ><ArrowUp size={14} /></button>
+                          <button
+                            className="btn btn-ghost"
+                            onClick={() => movePage(i, 1)}
+                            disabled={i === (quiz.pages.length - 1)}
+                            title="Mover pra baixo"
+                            style={{ padding: 6, opacity: i === (quiz.pages.length - 1) ? 0.3 : 1 }}
+                          ><ArrowDown size={14} /></button>
+                          <button
+                            className="btn btn-ghost"
+                            onClick={() => {
+                              if (confirm(`Remover página ${i + 1}?`)) removePage(i);
+                            }}
+                            title="Remover página"
+                            style={{ padding: 6, color: '#dc2626' }}
+                          ><Trash2 size={14} /></button>
+                        </div>
                       </div>
                     );
                   })}
                 </div>
 
                 <div style={{ display: 'flex', gap: 12 }}>
-                  <button className="btn btn-ghost btn-lg" onClick={() => { setStep(0); setQuiz(null); }}><ArrowLeft size={18} /> Voltar</button>
+                  <button className="btn btn-ghost btn-lg" onClick={() => { setStep(0); setQuiz(null); }} disabled={cloning}>
+                    <ArrowLeft size={18} /> Voltar
+                  </button>
                   <button className="btn btn-primary btn-lg" style={{ flex: 1 }} onClick={async () => {
                     setClonePhase('✅ Publicando...');
                     setCloning(true);
@@ -422,7 +607,7 @@ export default function Builder() {
                       setStep(2);
                     } catch (err) { setGenError(err.message); }
                     finally { setCloning(false); }
-                  }} disabled={cloning}>
+                  }} disabled={cloning || (quiz.pages || []).length === 0}>
                     {cloning ? <><Loader2 size={16} className="spin" /> Publicando...</> : <>🚀 Publicar Quiz</>}
                   </button>
                 </div>
@@ -573,6 +758,40 @@ export default function Builder() {
           </>
         )}
       </div>
+
+      {/* ── Screenshot modal (clone review) ── */}
+      {screenshotModalIdx !== null && quiz?.pages?.[screenshotModalIdx]?.screenshot && (
+        <div
+          onClick={() => setScreenshotModalIdx(null)}
+          style={{
+            position: 'fixed', inset: 0, zIndex: 9999,
+            background: 'rgba(0,0,0,0.85)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            padding: 20, cursor: 'zoom-out',
+          }}
+        >
+          <button
+            onClick={(e) => { e.stopPropagation(); setScreenshotModalIdx(null); }}
+            title="Fechar"
+            style={{
+              position: 'absolute', top: 20, right: 20,
+              width: 40, height: 40, borderRadius: '50%',
+              background: 'rgba(255,255,255,0.12)', border: 'none',
+              color: '#fff', cursor: 'pointer',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}
+          ><X size={20} /></button>
+          <div style={{ color: '#fff', position: 'absolute', top: 28, left: '50%', transform: 'translateX(-50%)', fontSize: '0.9rem', fontWeight: 600 }}>
+            Página {screenshotModalIdx + 1} — original
+          </div>
+          <img
+            onClick={e => e.stopPropagation()}
+            src={`data:image/jpeg;base64,${quiz.pages[screenshotModalIdx].screenshot}`}
+            alt={`Página ${screenshotModalIdx + 1}`}
+            style={{ maxWidth: '90vw', maxHeight: '85vh', borderRadius: 8, boxShadow: '0 20px 60px rgba(0,0,0,0.5)', cursor: 'default' }}
+          />
+        </div>
+      )}
     </div>
   );
 }

@@ -1,7 +1,7 @@
 // CloneEditor.jsx — Specialized editor for cloned HTML pages
 // Full-height scrollable preview with hover highlights and click selection
 // Selected element info is emitted to parent for right-panel editing
-import { useState, useRef, useCallback, useEffect } from 'react';
+import { useState, useRef, useCallback, useEffect, useLayoutEffect } from 'react';
 import { MousePointerClick, Plus } from 'lucide-react';
 
 // ── Identify element type ──
@@ -208,13 +208,23 @@ export default function CloneEditor({ block, onBlockChange, stepName, primaryCol
     const [selectionRect, setSelectionRect] = useState(null);
     const pc = primaryColor || '#6c63ff';
 
-    // ── Sanitize cloned HTML: remove download triggers, prevent link navigation ──
-    useEffect(() => {
+    // ── lastAppliedCodeRef: tracks the HTML currently in the DOM
+    //    Prevents React from overwriting the container on every keystroke
+    //    (which would destroy the user's cursor + selection). ──
+    const lastAppliedCodeRef = useRef(null);
+
+    // ── Apply block.code to the container ONLY when the source actually differs
+    //    from what we already wrote. Sanitization piggybacks on the same path so
+    //    it only runs on real external changes (initial load, page switch, undo). ──
+    useLayoutEffect(() => {
         const container = containerRef.current;
         if (!container) return;
-        // Remove download attributes from <a> tags
+        const incoming = block?.code || '';
+        if (incoming === lastAppliedCodeRef.current) return;
+        container.innerHTML = incoming;
+        lastAppliedCodeRef.current = incoming;
+        // Sanitize: remove download triggers, prevent link navigation, kill scripts
         container.querySelectorAll('a[download]').forEach(a => a.removeAttribute('download'));
-        // Prevent <a> tags from navigating or downloading
         container.querySelectorAll('a').forEach(a => {
             const href = a.getAttribute('href') || '';
             if (href && href !== '#' && !href.startsWith('javascript:')) {
@@ -222,9 +232,18 @@ export default function CloneEditor({ block, onBlockChange, stepName, primaryCol
                 a.setAttribute('href', 'javascript:void(0)');
             }
         });
-        // Remove potentially dangerous script tags
         container.querySelectorAll('script').forEach(s => s.remove());
     }, [block?.code]);
+
+    // ── Helper: push current DOM state up without triggering DOM re-write.
+    //    Use this everywhere we mutate the container.innerHTML in place. ──
+    const flushBlockChange = useCallback((extraFields) => {
+        const container = containerRef.current;
+        if (!container) return;
+        const code = container.innerHTML;
+        lastAppliedCodeRef.current = code;
+        onBlockChange?.({ ...block, code, fullCode: code, ...(extraFields || {}) });
+    }, [block, onBlockChange]);
 
     // ── Insert element into HTML ──
     const insertElement = useCallback((htmlSnippet) => {
@@ -232,9 +251,9 @@ export default function CloneEditor({ block, onBlockChange, stepName, primaryCol
         if (!container) return;
         const clonedPage = container.querySelector('.cloned-page') || container;
         clonedPage.insertAdjacentHTML('beforeend', htmlSnippet);
-        onBlockChange?.({ ...block, code: container.innerHTML, fullCode: container.innerHTML });
+        flushBlockChange();
         setShowInsert(false);
-    }, [block, onBlockChange]);
+    }, [flushBlockChange]);
 
     // ── Ref for drop target element ──
     const dropTargetRef = useRef(null); // { el, position: 'beforebegin'|'afterend' }
@@ -251,8 +270,8 @@ export default function CloneEditor({ block, onBlockChange, stepName, primaryCol
             const clonedPage = container.querySelector('.cloned-page') || container;
             clonedPage.insertAdjacentHTML('beforeend', htmlSnippet);
         }
-        onBlockChange?.({ ...block, code: container.innerHTML, fullCode: container.innerHTML });
-    }, [block, onBlockChange]);
+        flushBlockChange();
+    }, [flushBlockChange]);
 
     const handleClick = useCallback((e) => {
         e.preventDefault();
@@ -433,7 +452,7 @@ export default function CloneEditor({ block, onBlockChange, stepName, primaryCol
                 const el = findByPath(container, path);
                 if (el) {
                     el.textContent = newText;
-                    onBlockChange?.({ ...block, code: container.innerHTML, fullCode: container.innerHTML });
+                    flushBlockChange();
                 }
             },
             updateImage: (path, newSrc) => {
@@ -442,7 +461,7 @@ export default function CloneEditor({ block, onBlockChange, stepName, primaryCol
                 const el = findByPath(container, path);
                 if (el && el.tagName === 'IMG') {
                     el.src = newSrc;
-                    onBlockChange?.({ ...block, code: container.innerHTML, fullCode: container.innerHTML });
+                    flushBlockChange();
                 }
             },
             deleteElement: (path) => {
@@ -451,7 +470,7 @@ export default function CloneEditor({ block, onBlockChange, stepName, primaryCol
                 const el = findByPath(container, path);
                 if (el) {
                     el.remove();
-                    onBlockChange?.({ ...block, code: container.innerHTML, fullCode: container.innerHTML });
+                    flushBlockChange();
                     setSelectedPath(null);
                     onElementSelect?.(null);
                 }
@@ -470,7 +489,7 @@ export default function CloneEditor({ block, onBlockChange, stepName, primaryCol
                     }
                 }
                 const newActions = { ...(block.buttonActions || {}), [path]: action };
-                onBlockChange?.({ ...block, buttonActions: newActions, code: container?.innerHTML, fullCode: container?.innerHTML });
+                flushBlockChange({ buttonActions: newActions });
             },
             updateStyle: (path, cssObj) => {
                 const container = containerRef.current;
@@ -480,7 +499,7 @@ export default function CloneEditor({ block, onBlockChange, stepName, primaryCol
                     Object.entries(cssObj).forEach(([prop, val]) => {
                         el.style[prop] = val;
                     });
-                    onBlockChange?.({ ...block, code: container.innerHTML, fullCode: container.innerHTML });
+                    flushBlockChange();
                 }
             },
             insertElement: (htmlSnippet) => insertElement(htmlSnippet),
@@ -498,7 +517,7 @@ export default function CloneEditor({ block, onBlockChange, stepName, primaryCol
                         newEl.style.boxSizing = 'border-box';
                     }
                     el.remove();
-                    onBlockChange?.({ ...block, code: container.innerHTML, fullCode: container.innerHTML });
+                    flushBlockChange();
                     // Don't deselect for gadget replacements — the parent handles re-selection
                     if (!isGadget) {
                         setSelectedPath(null);
@@ -550,7 +569,7 @@ export default function CloneEditor({ block, onBlockChange, stepName, primaryCol
                     inner += `<div style="display:flex;align-items:center;justify-content:center;gap:20px;margin-top:8px"><div style="width:48px;height:48px;border-radius:14px;background:#f1f5f9;border:2px solid #e2e8f0;display:flex;align-items:center;justify-content:center;font-size:24px;font-weight:700;color:#9ca3af">−</div><div style="text-align:center;min-width:80px"><div style="font-size:40px;font-weight:800;color:#1a2332;line-height:1">${def}</div><div style="font-size:14px;font-weight:600;color:#9ca3af;margin-top:2px">${unit}</div></div><div style="width:48px;height:48px;border-radius:14px;background:${color};display:flex;align-items:center;justify-content:center;font-size:24px;font-weight:700;color:#fff">+</div></div>`;
                 }
                 el.innerHTML = inner;
-                onBlockChange?.({ ...block, code: container.innerHTML, fullCode: container.innerHTML });
+                flushBlockChange();
                 // Re-trigger element selection so the panel updates with new style
                 const elPath = getElementPath(el, container);
                 const rect = el.getBoundingClientRect();
@@ -585,7 +604,7 @@ export default function CloneEditor({ block, onBlockChange, stepName, primaryCol
                     const img = slides[slideIdx].querySelector('img');
                     if (img) {
                         img.src = newSrc;
-                        onBlockChange?.({ ...block, code: container.innerHTML, fullCode: container.innerHTML });
+                        flushBlockChange();
                     }
                 }
             },
@@ -715,7 +734,7 @@ export default function CloneEditor({ block, onBlockChange, stepName, primaryCol
                         if (ch.style?.fontStyle?.includes('italic')) ch.style.display = '';
                     });
                 }
-                onBlockChange?.({ ...block, code: container.innerHTML, fullCode: container.innerHTML });
+                flushBlockChange();
                 // Re-trigger selection to refresh panel
                 window.__cloneEditorApi?._reselectCarousel(carouselPath);
             },
@@ -736,7 +755,7 @@ export default function CloneEditor({ block, onBlockChange, stepName, primaryCol
                     if (hint) { hint.insertAdjacentHTML('beforebegin', newSlide); }
                     else { carousel.insertAdjacentHTML('beforeend', newSlide); }
                 }
-                onBlockChange?.({ ...block, code: container.innerHTML, fullCode: container.innerHTML });
+                flushBlockChange();
                 window.__cloneEditorApi?._reselectCarousel(carouselPath);
             },
             removeCarouselSlide: (carouselPath, slideIdx) => {
@@ -749,7 +768,7 @@ export default function CloneEditor({ block, onBlockChange, stepName, primaryCol
                 const slides = [...slideSource.children].filter(ch => ch.querySelector?.('img'));
                 if (slides.length > 1 && slides[slideIdx]) {
                     slides[slideIdx].remove();
-                    onBlockChange?.({ ...block, code: container.innerHTML, fullCode: container.innerHTML });
+                    flushBlockChange();
                     window.__cloneEditorApi?._reselectCarousel(carouselPath);
                 }
             },
@@ -1038,7 +1057,6 @@ export default function CloneEditor({ block, onBlockChange, stepName, primaryCol
                                     window.__draggedGadgetHtml = null;
                                 }
                             }}
-                            dangerouslySetInnerHTML={{ __html: block.code || '' }}
                             style={{ cursor: 'pointer', position: 'relative' }}
                         />
                         {/* Drop indicator line */}
