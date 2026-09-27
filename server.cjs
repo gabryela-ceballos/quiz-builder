@@ -994,6 +994,7 @@ async function callOpenAI(prompt, { system = '', temperature = 0.7, maxTokens = 
 
 // ── Translate texts batch ──
 app.post('/api/translate', async (req, res) => {
+    if (!OPENAI_KEY) return res.status(400).json({ error: 'VITE_OPENAI_API_KEY não configurada' });
     try {
         const { texts, targetLang } = req.body;
         if (!texts || !Array.isArray(texts) || texts.length === 0) {
@@ -1013,7 +1014,7 @@ app.post('/api/translate', async (req, res) => {
         
         const aiRes = await fetch('https://api.openai.com/v1/chat/completions', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${process.env.OPENAI_API_KEY || ''}` },
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${OPENAI_KEY}` },
             body: JSON.stringify({
                 model: 'gpt-4o-mini',
                 messages: [{
@@ -1029,6 +1030,10 @@ app.post('/api/translate', async (req, res) => {
         });
         
         const aiData = await aiRes.json();
+        if (!aiRes.ok || aiData.error) {
+            console.error('[Translate] OpenAI error:', aiData.error?.message || aiRes.status);
+            return res.status(502).json({ error: aiData.error?.message || 'Translation failed' });
+        }
         const content = aiData.choices?.[0]?.message?.content || '';
         
         // Parse numbered translations

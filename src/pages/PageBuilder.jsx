@@ -859,6 +859,7 @@ export default function PageBuilder() {
                                                             body: JSON.stringify({ texts: chunk, targetLang: lang }),
                                                         });
                                                         const data = await res.json();
+                                                        if (!res.ok) throw new Error(data.error || 'Translation failed');
                                                         allTranslated.push(...(data.translated || chunk));
                                                     }
 
