@@ -171,6 +171,15 @@ function requireAdmin(req, res, next) {
 app.post('/api/auth/register', (req, res) => {
     const { name, email, password } = req.body;
     if (!name || !email || !password) return res.status(400).json({ error: 'Nome, email e senha obrigatórios' });
+// Owner, admin or collaborator (shares) of a quiz. Legacy quizzes without owner stay accessible to logged-in users.
+function canAccessQuiz(user, quizId) {
+    if (!user) return false;
+    if (user.role === 'admin') return true;
+    const row = db.prepare('SELECT user_id FROM quizzes WHERE id = ?').get(quizId);
+    if (!row) return false;
+    if (!row.user_id || row.user_id === user.id) return true;
+    return !!db.prepare('SELECT 1 FROM shares WHERE quiz_id = ? AND shared_with = ?').get(quizId, String(user.email || '').toLowerCase());
+}
     if (password.length < 4) return res.status(400).json({ error: 'Senha deve ter pelo menos 4 caracteres' });
 
     const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(email.toLowerCase().trim());
@@ -433,8 +442,8 @@ app.delete('/api/quizzes/:id', requireAuth, (req, res) => {
     res.json({ ok: true });
 });
 
-// DELETE all quizzes
-app.delete('/api/quizzes', (req, res) => {
+// DELETE all quizzes (admin only — wipes the whole database)
+app.delete('/api/quizzes', requireAdmin, (req, res) => {
     db.prepare('DELETE FROM quizzes').run();
     db.prepare('DELETE FROM leads').run();
     db.prepare('DELETE FROM analytics').run();
@@ -830,7 +839,7 @@ app.get('/api/server-info', (req, res) => {
 });
 
 // Debug endpoint to see raw Railway API response
-app.get('/api/railway-debug', async (req, res) => {
+app.get('/api/railway-debug', requireAdmin, async (req, res) => {
     if (!RAILWAY_API_TOKEN || !RAILWAY_SERVICE_ID || !RAILWAY_ENVIRONMENT_ID || !RAILWAY_PROJECT_ID) {
         return res.json({ error: 'Railway not configured' });
     }
@@ -891,7 +900,8 @@ app.post('/api/leads', (req, res) => {
     res.json({ ok: true });
 });
 
-app.get('/api/leads/:quizId', (req, res) => {
+app.get('/api/leads/:quizId', requireAuth, (req, res) => {
+    if (!canAccessQuiz(req.user, req.params.quizId)) return res.status(403).json({ error: 'Acesso negado' });
     const rows = db.prepare('SELECT data, created_at FROM leads WHERE quiz_id = ? ORDER BY created_at DESC').all(req.params.quizId);
     res.json(rows.map(r => ({ ...JSON.parse(r.data), date: new Date(r.created_at).toISOString() })));
 });
@@ -903,7 +913,8 @@ app.post('/api/analytics', (req, res) => {
     res.json({ ok: true });
 });
 
-app.get('/api/analytics/:quizId', (req, res) => {
+app.get('/api/analytics/:quizId', requireAuth, (req, res) => {
+    if (!canAccessQuiz(req.user, req.params.quizId)) return res.status(403).json({ error: 'Acesso negado' });
     const rows = db.prepare('SELECT event, data, created_at FROM analytics WHERE quiz_id = ? ORDER BY created_at DESC').all(req.params.quizId);
     const events = rows.map(r => ({ event: r.event, ...JSON.parse(r.data || '{}'), date: new Date(r.created_at).toISOString() }));
 
@@ -1627,7 +1638,7 @@ Você DEVE criar quizzes que sigam uma jornada lógica e narrativa:
 });
 
 // ═══ DIAGNOSTIC ENDPOINT ═══
-app.get('/api/diag', (req, res) => {
+app.get('/api/diag', requireAdmin, (req, res) => {
     res.json({
         openaiKey: OPENAI_KEY ? `SET (${OPENAI_KEY.slice(0, 8)}...${OPENAI_KEY.slice(-4)})` : 'NOT SET',
         envVars: {

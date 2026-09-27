@@ -90,7 +90,8 @@ export async function saveLead(quizId, leadData) {
 
 export async function getLeads(quizId) {
     try {
-        const res = await fetch(`${API}/leads/${quizId}`);
+        const res = await fetch(`${API}/leads/${quizId}`, { headers: authHeaders() });
+        if (!res.ok) return [];
         return await res.json();
     } catch (_) { return []; }
 }
@@ -108,7 +109,8 @@ export async function recordEvent(quizId, event, data = {}) {
 
 export async function getAnalytics(quizId) {
     try {
-        const res = await fetch(`${API}/analytics/${quizId}`);
+        const res = await fetch(`${API}/analytics/${quizId}`, { headers: authHeaders() });
+        if (!res.ok) throw new Error(String(res.status));
         return await res.json();
     } catch (_) { return { starts: 0, completes: 0, conversionRate: 0, events: [], answers: [] }; }
 }
